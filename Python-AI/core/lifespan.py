@@ -67,7 +67,7 @@ async def _validate_startup_requirements() -> None:
             path.mkdir(parents=True, exist_ok=True)
 
     health = await get_database_health()
-    if not health.get("ok"):
+    if health.get("status") != "ok":
         raise ConfigurationError("MongoDB health check failed")
 
 

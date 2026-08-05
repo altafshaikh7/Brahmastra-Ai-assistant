@@ -1,151 +1,179 @@
 # dependencies/auth.py
 """
-Authentication and authorization dependency functions.
+FastAPI dependency injection layer for authentication and authorization.
 
-This module provides FastAPI dependency callables that enforce
-authentication schemes (Bearer token, API key) and authorization
-constraints (roles, permissions). The JWT verification layer is
-designed to be easily replaced with a real identity provider later.
+All business logic – JWT handling, API‑key validation, role/permission
+enforcement – is owned by ``core.security``.  This module *only* adapts
+those primitives into ``Depends`` / ``Security`` callables and maps
+security‑related exceptions into HTTP responses.
+
+Conforms to Clean Architecture: no cryptographic, authorisation, or
+token validation logic lives here.  Every security operation is delegated
+to ``core.security``.
 """
 
 from __future__ import annotations
 
-import logging
-from typing import Any, Callable, Dict, List, Optional, Set, Union
+from functools import lru_cache
+from typing import Annotated, Callable, Final, NoReturn, Optional, Sequence
 
-import jwt
-from fastapi import Depends, HTTPException, Request, Security, status
+from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import (
     APIKeyHeader,
     HTTPAuthorizationCredentials,
     HTTPBearer,
 )
-from pydantic import BaseModel, ConfigDict, Field
 
-from core.config import get_settings
-
-logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# User model (placeholder – can be replaced with DB‑backed model later)
-# ---------------------------------------------------------------------------
-
-class UserInfo(BaseModel):
-    """Minimal representation of an authenticated user."""
-
-    id: str = Field(..., description="Unique user identifier (sub claim).")
-    username: str | None = Field(None, description="Human‑friendly username.")
-    roles: List[str] = Field(default_factory=list, description="Assigned roles.")
-    permissions: List[str] = Field(
-        default_factory=list, description="Derived or assigned permissions."
-    )
-    extra: Dict[str, Any] = Field(
-        default_factory=dict, description="Additional JWT claims."
-    )
-
-    model_config = ConfigDict(strict=True)
-
-
-# ---------------------------------------------------------------------------
-# Role <-> Permission mapping (hard‑coded for Phase 1 – extendable)
-# ---------------------------------------------------------------------------
-
-_ROLE_PERMISSIONS: Dict[str, Set[str]] = {
-    "admin": {"*"},
-    "user": {"read:tools", "execute:tools"},
-    "operator": {"read:tools", "execute:tools", "manage:automation"},
-}
-
-
-def _get_permissions_for_roles(roles: List[str]) -> Set[str]:
-    """Resolve permissions from a list of role names."""
-    perms: Set[str] = set()
-    for role in roles:
-        role_perms = _ROLE_PERMISSIONS.get(role, set())
-        if "*" in role_perms:
-            # Wildcard means all permissions; we signal it with a special value
-            # but downstream checks will handle "*" explicitly.
-            perms = {"*"}
-            break
-        perms |= role_perms
-    return perms
-
-
-# ---------------------------------------------------------------------------
-# JWT helpers
-# ---------------------------------------------------------------------------
-
-_settings = get_settings()
-
-_JWT_SECRET: str = _settings.jwt.secret_key.get_secret_value()
-_JWT_ALGORITHM: str = _settings.jwt.algorithm.value
-_TOKEN_PREFIX: str = _settings.jwt.token_prefix.lower()
-
-bearer_scheme = HTTPBearer(auto_error=False)
-optional_bearer_scheme = HTTPBearer(auto_error=False)
-
-
-def _decode_token(token: str) -> Dict[str, Any]:
-    """Decode and validate a JWT access token.
-
-    Returns the decoded payload dictionary.  All relevant PyJWT
-    exceptions are caught and re‑raised as HTTP 401.
-    """
-    try:
-        payload: Dict[str, Any] = jwt.decode(
-            token,
-            _JWT_SECRET,
-            algorithms=[_JWT_ALGORITHM],
-        )
-        return payload
-    except jwt.ExpiredSignatureError:
-        logger.warning("Expired JWT token encountered.")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired.",
-        )
-    except jwt.InvalidTokenError as exc:
-        logger.warning("Invalid JWT token: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials.",
-        )
-    except Exception as exc:
-        logger.exception("Unexpected JWT decoding error.")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials.",
-        )
-
-
-# ---------------------------------------------------------------------------
-# API‑Key security scheme
-# ---------------------------------------------------------------------------
-
-api_key_header = APIKeyHeader(
-    name=_settings.security.api_key_header,
-    auto_error=False,
+from core.config import Settings, get_settings
+from core.security import (
+    AuthenticationError,
+    AuthorizationError,
+    SecurityError,
+    TokenError,
+    check_user_is_active,
+    has_any_role,
+    has_permission,
+    validate_api_key as _validate_api_key,
+    validate_token,
 )
+from schemas.user import UserInfo
+
+# ---------------------------------------------------------------------------
+# Lazy configuration access (no import‑time calls to get_settings())
+# ---------------------------------------------------------------------------
+
+_settings: Optional[Settings] = None
+
+def _get_settings() -> Settings:
+    """Thread‑safe, cached access to application settings."""
+    global _settings
+    if _settings is None:
+        _settings = get_settings()
+    return _settings
 
 
-def _get_api_key() -> Optional[str]:
-    """Return the expected API key from environment or settings."""
-    # In production this would come from a secure vault.
-    import os
+@lru_cache
+def _get_token_prefix() -> str:
+    """Return the lower‑cased token prefix (e.g. ``bearer``)."""
+    return _get_settings().jwt.token_prefix.lower()
 
-    return os.environ.get("BRAHMSTRA_API_KEY")
+
+@lru_cache
+def _get_api_key_header_name() -> str:
+    """Return the name of the API‑key HTTP header."""
+    return _get_settings().security.api_key_header
 
 
 # ---------------------------------------------------------------------------
-# Core dependency functions
+# Security scheme factories (no module‑level instantiation)
+# ---------------------------------------------------------------------------
+
+def _bearer_scheme() -> HTTPBearer:
+    return HTTPBearer(auto_error=False)
+
+
+def _optional_bearer_scheme() -> HTTPBearer:
+    return HTTPBearer(auto_error=False)
+
+
+def _api_key_scheme() -> APIKeyHeader:
+    return APIKeyHeader(name=_get_api_key_header_name(), auto_error=False)
+
+
+# ---------------------------------------------------------------------------
+# Strongly‑typed JWT claims
+# ---------------------------------------------------------------------------
+
+from typing import TypedDict
+
+class JWTClaims(TypedDict, total=False):
+    """Representation of a decoded and validated JWT payload."""
+    sub: str
+    username: str
+    is_active: bool
+    roles: list[str]
+    permissions: list[str]
+
+
+# ---------------------------------------------------------------------------
+# Exception mapping (single central converter)
+# ---------------------------------------------------------------------------
+
+def _security_exception_to_http(
+    exc: SecurityError,
+    extra_headers: Optional[dict[str, str]] = None,
+) -> NoReturn:
+    """Translate a ``SecurityError`` from ``core.security`` into an ``HTTPException``.
+
+    Status codes are derived from the exception type:
+    - ``TokenError``, ``AuthenticationError`` → 401
+    - ``AuthorizationError`` → 403
+    - Any other ``SecurityError`` → 403 (fallback)
+
+    If the original exception carries an ``http_headers`` attribute (a dict),
+    those headers are merged into the response.
+    """
+    if isinstance(exc, (TokenError, AuthenticationError)):
+        status_code = status.HTTP_401_UNAUTHORIZED
+    else:
+        status_code = status.HTTP_403_FORBIDDEN
+
+    headers = {}
+    if extra_headers:
+        headers.update(extra_headers)
+    if hasattr(exc, "http_headers"):
+        headers.update(exc.http_headers)
+
+    raise HTTPException(status_code=status_code, detail=str(exc), headers=headers or None)
+
+
+# ---------------------------------------------------------------------------
+# Payload → UserInfo adapter
+# ---------------------------------------------------------------------------
+
+def _claims_to_user(claims: JWTClaims) -> UserInfo:
+    """Build a ``UserInfo`` instance from validated JWT claims."""
+    return UserInfo(
+        id=claims.get("sub", ""),
+        username=claims.get("username"),
+        is_active=claims.get("is_active", True),
+        roles=claims.get("roles", []),
+        permissions=claims.get("permissions", []),
+        extra={
+            k: v
+            for k, v in claims.items()
+            if k not in {"sub", "username", "is_active", "roles", "permissions"}
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public dependency callables
 # ---------------------------------------------------------------------------
 
 def verify_bearer_token(
-    credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
-) -> Dict[str, Any]:
-    """Verify a Bearer token and return its decoded payload.
+    credentials: Annotated[
+        Optional[HTTPAuthorizationCredentials],
+        Security(_bearer_scheme),
+    ] = None,
+) -> JWTClaims:
+    """Verify the presence and validity of a Bearer token.
 
-    Raises 401 if the token is missing, invalid, or the scheme is wrong.
+    Parameters
+    ----------
+    credentials : Optional[HTTPAuthorizationCredentials]
+        Extracted by ``HTTPBearer`` from the ``Authorization`` header.
+
+    Returns
+    -------
+    JWTClaims
+        The validated JWT claims dictionary.
+
+    Raises
+    ------
+    HTTPException (401)
+        If the token is missing, has an unsupported scheme, or is
+        considered invalid by ``core.security.validate_token``.
     """
     if credentials is None:
         raise HTTPException(
@@ -153,72 +181,137 @@ def verify_bearer_token(
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    if credentials.scheme.lower() != _TOKEN_PREFIX:
+    if credentials.scheme.lower() != _get_token_prefix():
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication scheme. Expected Bearer.",
+            detail=f"Invalid authentication scheme. Expected {_get_token_prefix()}.",
         )
-    return _decode_token(credentials.credentials)
+    try:
+        # validate_token returns the decoded payload (a dict) – cast to JWTClaims
+        return validate_token(credentials.credentials)  # type: ignore[return-value]
+    except (TokenError, AuthenticationError) as exc:
+        _security_exception_to_http(exc)
+        raise  # unreachable, kept for type checker
 
 
 def get_current_user(
-    token_payload: Dict[str, Any] = Depends(verify_bearer_token),
+    claims: Annotated[JWTClaims, Depends(verify_bearer_token)],
 ) -> UserInfo:
-    """Extract and return the current user from a verified JWT.
+    """Extract the currently authenticated user from a valid JWT.
 
-    This dependency requires a valid Bearer token.
+    Parameters
+    ----------
+    claims : JWTClaims
+        The validated claims dictionary returned by
+        :func:`verify_bearer_token`.
+
+    Returns
+    -------
+    UserInfo
+        The user principal.
     """
-    user_id: str = token_payload.get("sub", "unknown")
-    username: str | None = token_payload.get("username")
-    roles: List[str] = token_payload.get("roles", [])
-    permissions: List[str] = token_payload.get("permissions", [])
-
-    # If no explicit permissions in token, derive them from roles.
-    if not permissions and roles:
-        permissions = sorted(_get_permissions_for_roles(roles))
-
-    return UserInfo(
-        id=user_id,
-        username=username,
-        roles=roles,
-        permissions=permissions,
-        extra={k: v for k, v in token_payload.items() if k not in {"sub", "username", "roles", "permissions"}},
-    )
+    return _claims_to_user(claims)
 
 
 def get_optional_user(
-    request: Request,
-    credentials: HTTPAuthorizationCredentials | None = Security(optional_bearer_scheme),
-) -> UserInfo | None:
-    """Like :func:`get_current_user`, but returns ``None`` when no token is provided.
+    credentials: Annotated[
+        Optional[HTTPAuthorizationCredentials],
+        Security(_optional_bearer_scheme),
+    ] = None,
+) -> Optional[UserInfo]:
+    """Return the authenticated user if a valid token is present, else ``None``.
 
-    Useful for endpoints that behave differently for authenticated users
-    but do not strictly require authentication.
+    Unlike :func:`get_current_user`, missing or invalid tokens do **not**
+    cause an error.  Useful for endpoints that optionally benefit from
+    authentication.
+
+    Parameters
+    ----------
+    credentials : Optional[HTTPAuthorizationCredentials]
+        Extracted by ``HTTPBearer`` (auto_error=False).
+
+    Returns
+    -------
+    Optional[UserInfo]
+        The user principal or ``None``.
     """
     if credentials is None:
         return None
     try:
-        payload = _decode_token(credentials.credentials)
-        return get_current_user(token_payload=payload)
-    except HTTPException:
+        claims = validate_token(credentials.credentials)  # type: ignore[return-value]
+        return _claims_to_user(claims)
+    except (TokenError, AuthenticationError):
         return None
 
 
 def get_current_user_id(
-    user: UserInfo = Depends(get_current_user),
+    user: Annotated[UserInfo, Depends(get_current_user)],
 ) -> str:
-    """Return the ID of the authenticated user."""
+    """Extract the unique identifier of the authenticated user.
+
+    Parameters
+    ----------
+    user : UserInfo
+        The authenticated user.
+
+    Returns
+    -------
+    str
+        The user id (``sub`` claim).
+    """
     return user.id
 
 
-def get_admin_user(
-    user: UserInfo = Depends(get_current_user),
+def get_current_active_user(
+    user: Annotated[UserInfo, Depends(get_current_user)],
 ) -> UserInfo:
-    """Require the current user to have the ``admin`` role.
+    """Require that the authenticated user is active.
 
-    Raises 403 if the user is not an admin.
+    Parameters
+    ----------
+    user : UserInfo
+        The authenticated user.
+
+    Returns
+    -------
+    UserInfo
+        The same user instance if active.
+
+    Raises
+    ------
+    HTTPException (403)
+        If the user is inactive (as determined by
+        ``core.security.check_user_is_active``).
     """
-    if "admin" not in user.roles:
+    try:
+        check_user_is_active(user)
+    except AuthorizationError as exc:
+        _security_exception_to_http(exc)
+    return user
+
+
+def get_admin_user(
+    user: Annotated[UserInfo, Depends(get_current_user)],
+) -> UserInfo:
+    """Require that the user holds the ``admin`` role.
+
+    Parameters
+    ----------
+    user : UserInfo
+        The authenticated user.
+
+    Returns
+    -------
+    UserInfo
+        The user if they are an admin.
+
+    Raises
+    ------
+    HTTPException (403)
+        If the user does not have the ``admin`` role.
+    """
+    # Role check delegated to core.security
+    if not has_any_role(user, ["admin"]):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin privileges required.",
@@ -231,52 +324,101 @@ def get_admin_user(
 # ---------------------------------------------------------------------------
 
 def verify_api_key(
-    api_key: str | None = Security(api_key_header),
+    api_key: Annotated[Optional[str], Security(_api_key_scheme)] = None,
 ) -> str:
-    """Verify that the request carries a valid API key.
+    """Verify a request‑scoped API key.
 
-    Returns the key itself if valid; raises 403 otherwise.
+    Delegates validation to ``core.security.validate_api_key``.
+
+    Parameters
+    ----------
+    api_key : Optional[str]
+        The API key value extracted from the configured header.
+
+    Returns
+    -------
+    str
+        The validated API key.
+
+    Raises
+    ------
+    HTTPException (403)
+        If the key is missing or invalid.
     """
-    expected_key = _get_api_key()
-    # In development / if no key is configured, we skip enforcement.
-    if expected_key is None:
-        logger.debug("No API key configured; skipping validation.")
-        return api_key or "development-key"
-
-    if api_key is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="API key is missing.",
-        )
-    if api_key != expected_key:
-        logger.warning("Invalid API key provided.")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid API key.",
-        )
-    return api_key
+    try:
+        return _validate_api_key(api_key)
+    except (AuthenticationError, SecurityError) as exc:
+        _security_exception_to_http(exc, extra_headers={"X-API-Key": "required"})
+        raise  # unreachable
 
 
 # ---------------------------------------------------------------------------
-# Authorisation factories (permissions / roles)
+# Authorisation factories (roles and permissions)
 # ---------------------------------------------------------------------------
+
+def require_roles(*required_roles: str) -> Callable[..., UserInfo]:
+    """Create a dependency that requires at least one of the given roles.
+
+    Parameters
+    ----------
+    required_roles : str
+        One or more role names (e.g., ``"admin"``, ``"operator"``).
+
+    Returns
+    -------
+    Callable[..., UserInfo]
+        A FastAPI dependency that checks the current user's roles.
+
+    Usage::
+
+        @router.get("/manage")
+        async def manage(user = Depends(require_roles("admin", "operator"))):
+            ...
+    """
+    role_list: Final[Sequence[str]] = list(required_roles)
+
+    def dependency(
+        user: Annotated[UserInfo, Depends(get_current_user)],
+    ) -> UserInfo:
+        if not has_any_role(user, role_list):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Requires one of roles: {', '.join(role_list)}.",
+            )
+        return user
+
+    return dependency
+
 
 def require_permissions(*required_permissions: str) -> Callable[..., UserInfo]:
-    """Return a dependency that requires the user to have **all** listed permissions.
+    """Create a dependency that requires **all** listed permissions.
+
+    Permissions are checked by ``core.security.has_permission``.
+    A user with the ``*`` wildcard permission satisfies any check
+    (this logic is handled inside ``core.security``).
+
+    Parameters
+    ----------
+    required_permissions : str
+        One or more permission strings (e.g., ``"manage:system"``).
+
+    Returns
+    -------
+    Callable[..., UserInfo]
+        A FastAPI dependency that checks the current user's permissions.
 
     Usage::
 
         @router.get("/admin")
-        async def admin_panel(user: UserInfo = Depends(require_permissions("manage:system"))):
+        async def admin(user = Depends(require_permissions("manage:system"))):
             ...
     """
+    perm_list: Final[Sequence[str]] = list(required_permissions)
 
     def dependency(
-        user: UserInfo = Depends(get_current_user),
+        user: Annotated[UserInfo, Depends(get_current_user)],
     ) -> UserInfo:
-        if "*" in user.permissions:
-            return user
-        missing = [p for p in required_permissions if p not in user.permissions]
+        missing = [p for p in perm_list if not has_permission(user, p)]
         if missing:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -287,24 +429,37 @@ def require_permissions(*required_permissions: str) -> Callable[..., UserInfo]:
     return dependency
 
 
-def require_roles(*required_roles: str) -> Callable[..., UserInfo]:
-    """Return a dependency that requires the user to have **at least one** of the listed roles.
+# ---------------------------------------------------------------------------
+# Type aliases for common dependency signatures
+# ---------------------------------------------------------------------------
 
-    Usage::
+CurrentUserDep = Annotated[UserInfo, Depends(get_current_user)]
+CurrentActiveUserDep = Annotated[UserInfo, Depends(get_current_active_user)]
+CurrentAdminDep = Annotated[UserInfo, Depends(get_admin_user)]
+OptionalUserDep = Annotated[Optional[UserInfo], Depends(get_optional_user)]
+BearerCredentialsDep = Annotated[HTTPAuthorizationCredentials, Security(_bearer_scheme)]
+APIKeyDep = Annotated[str, Depends(verify_api_key)]
 
-        @router.get("/tools/manage")
-        async def manage_tools(user: UserInfo = Depends(require_roles("admin", "operator"))):
-            ...
-    """
 
-    def dependency(
-        user: UserInfo = Depends(get_current_user),
-    ) -> UserInfo:
-        if not set(user.roles) & set(required_roles):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Requires one of roles: {', '.join(required_roles)}.",
-            )
-        return user
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
-    return dependency
+__all__ = [
+    "UserInfo",
+    "verify_bearer_token",
+    "verify_api_key",
+    "get_current_user",
+    "get_optional_user",
+    "get_current_user_id",
+    "get_current_active_user",
+    "get_admin_user",
+    "require_roles",
+    "require_permissions",
+    "CurrentUserDep",
+    "CurrentActiveUserDep",
+    "CurrentAdminDep",
+    "OptionalUserDep",
+    "BearerCredentialsDep",
+    "APIKeyDep",
+]

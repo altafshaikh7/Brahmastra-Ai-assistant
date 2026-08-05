@@ -1,4 +1,4 @@
-﻿# core/config.py
+# core/config.py
 """Centralized configuration for the Brahmastra AI application.
 
 This module provides type-safe, validated configuration using Pydantic v2.
@@ -382,7 +382,7 @@ class AISettings(BaseModel):
     max_output_tokens: int = Field(default=1024, ge=1)
 
     # New fields
-    provider: ProviderType = Field(default="openai")
+    provider: ProviderType = Field(default="gemini")
     api_key: Optional[SecretStr] = Field(default=None)
     base_url: Optional[HttpUrl] = Field(default=None)
     timeout_seconds: int = Field(default=60, ge=1)
@@ -394,7 +394,7 @@ class AISettings(BaseModel):
     azure_deployment: Optional[str] = Field(default=None)
     azure_api_version: Optional[str] = Field(default=None)
     anthropic_version: Optional[str] = Field(default="2023-06-01")
-    gemini_model: Optional[str] = Field(default=None)
+    gemini_model: str = Field(default="gemini-1.5-pro")
     openrouter_model: Optional[str] = Field(default=None)
 
     @field_validator("base_url", mode="before")
