@@ -8,16 +8,16 @@ and internal services.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-
 
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
+
 
 class ToolParameterType(str, Enum):
     """Supported data types for tool parameters."""
@@ -45,6 +45,7 @@ class ToolCategory(str, Enum):
 # Tool Parameter
 # ---------------------------------------------------------------------------
 
+
 class ToolParameter(BaseModel):
     """Description of a single parameter accepted by a tool."""
 
@@ -63,7 +64,7 @@ class ToolParameter(BaseModel):
         False,
         description="Whether the parameter is mandatory.",
     )
-    default: Optional[Any] = Field(
+    default: Any | None = Field(
         None,
         description="Default value if the parameter is not provided.",
     )
@@ -72,7 +73,7 @@ class ToolParameter(BaseModel):
         description="Human‑readable explanation of the parameter's purpose.",
         examples=["Target hostname or IP address."],
     )
-    example: Optional[Any] = Field(
+    example: Any | None = Field(
         None,
         description="Example value for documentation purposes.",
     )
@@ -86,6 +87,7 @@ class ToolParameter(BaseModel):
 # ---------------------------------------------------------------------------
 # Tool Metadata
 # ---------------------------------------------------------------------------
+
 
 class ToolMetadata(BaseModel):
     """Metadata describing the origin and classification of a tool."""
@@ -103,12 +105,12 @@ class ToolMetadata(BaseModel):
         ToolCategory.custom,
         description="Category under which the tool is grouped.",
     )
-    tags: List[str] = Field(
+    tags: list[str] = Field(
         default_factory=list,
         description="List of tags for filtering and discovery.",
         examples=[["network", "diagnostics"]],
     )
-    documentation_url: Optional[str] = Field(
+    documentation_url: str | None = Field(
         None,
         description="URL to the tool's full documentation.",
     )
@@ -121,6 +123,7 @@ class ToolMetadata(BaseModel):
 # ---------------------------------------------------------------------------
 # Tool Schema (full definition)
 # ---------------------------------------------------------------------------
+
 
 class ToolSchema(BaseModel):
     """Complete schema defining a tool's interface and metadata."""
@@ -142,7 +145,7 @@ class ToolSchema(BaseModel):
         description="Detailed description of what the tool does.",
         examples=["Sends ICMP Echo Request packets to a target host."],
     )
-    parameters: List[ToolParameter] = Field(
+    parameters: list[ToolParameter] = Field(
         default_factory=list,
         description="List of parameters the tool accepts.",
     )
@@ -170,6 +173,7 @@ class ToolSchema(BaseModel):
 # Tool Registration
 # ---------------------------------------------------------------------------
 
+
 class ToolRegistration(BaseModel):
     """Record of a tool that has been registered in the system."""
 
@@ -186,7 +190,7 @@ class ToolRegistration(BaseModel):
         description="Whether the tool's implementation has been loaded into memory.",
     )
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(UTC),
         description="UTC timestamp when the tool was registered.",
     )
 
@@ -200,6 +204,7 @@ class ToolRegistration(BaseModel):
 # Tool Execution Request
 # ---------------------------------------------------------------------------
 
+
 class ToolExecutionRequest(BaseModel):
     """Payload to execute a tool, as used by internal services."""
 
@@ -209,7 +214,7 @@ class ToolExecutionRequest(BaseModel):
         description="Name of the tool to execute.",
         examples=["ping"],
     )
-    arguments: Dict[str, Any] = Field(
+    arguments: dict[str, Any] = Field(
         default_factory=dict,
         description="Keyword arguments passed to the tool's execute method.",
         examples=[{"host": "127.0.0.1"}],
@@ -244,6 +249,7 @@ class ToolExecutionRequest(BaseModel):
 # Tool Execution Response
 # ---------------------------------------------------------------------------
 
+
 class ToolExecutionResponse(BaseModel):
     """Result of a tool execution returned by the service."""
 
@@ -264,12 +270,12 @@ class ToolExecutionResponse(BaseModel):
         ge=0.0,
         description="Wall‑clock execution time in milliseconds.",
     )
-    exit_code: Optional[int] = Field(
+    exit_code: int | None = Field(
         None,
         description="Process exit code if the tool was executed as a subprocess.",
     )
     timestamp: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(UTC),
         description="UTC timestamp when execution completed.",
     )
 
@@ -283,6 +289,7 @@ class ToolExecutionResponse(BaseModel):
 # Tool List Response
 # ---------------------------------------------------------------------------
 
+
 class ToolListResponse(BaseModel):
     """Envelope for listing registered tools."""
 
@@ -291,7 +298,7 @@ class ToolListResponse(BaseModel):
         ge=0,
         description="Total number of registered tools.",
     )
-    tools: List[ToolSchema] = Field(
+    tools: list[ToolSchema] = Field(
         default_factory=list,
         description="List of tool schemas currently available.",
     )
@@ -305,6 +312,7 @@ class ToolListResponse(BaseModel):
 # Tool Health
 # ---------------------------------------------------------------------------
 
+
 class ToolHealth(BaseModel):
     """Health status of an individual tool within the registry."""
 
@@ -317,11 +325,11 @@ class ToolHealth(BaseModel):
         description="Current health status (e.g., 'healthy', 'error').",
         examples=["healthy"],
     )
-    last_execution: Optional[datetime] = Field(
+    last_execution: datetime | None = Field(
         None,
         description="UTC timestamp of the tool's last execution.",
     )
-    average_execution_time: Optional[float] = Field(
+    average_execution_time: float | None = Field(
         None,
         ge=0.0,
         description="Rolling average execution time in milliseconds.",

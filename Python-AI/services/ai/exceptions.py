@@ -7,7 +7,8 @@ and service layers, deriving from ApplicationError for standardized FastAPI hand
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any
+
 from core.exceptions import ApplicationError, ErrorCode
 
 
@@ -18,7 +19,7 @@ class AIServiceException(ApplicationError):
         self,
         message: str = "AI service error",
         status_code: int = 500,
-        details: Optional[Dict[str, Any]] = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(
             message=message,
@@ -53,7 +54,7 @@ class TimeoutException(AIServiceException):
 class RateLimitException(AIServiceException):
     """Raised when an AI provider rate limit is exceeded."""
 
-    def __init__(self, provider: str, details: Optional[str] = None) -> None:
+    def __init__(self, provider: str, details: str | None = None) -> None:
         super().__init__(
             message=f"Rate limit exceeded for AI provider '{provider}'. {details or ''}".strip(),
             status_code=429,
@@ -75,7 +76,9 @@ class NetworkErrorException(AIServiceException):
 class ProviderErrorException(AIServiceException):
     """Raised when an AI provider returns an API error response."""
 
-    def __init__(self, provider: str, error_message: str, status_code: int = 502) -> None:
+    def __init__(
+        self, provider: str, error_message: str, status_code: int = 502
+    ) -> None:
         super().__init__(
             message=f"AI provider '{provider}' error: {error_message}",
             status_code=status_code,

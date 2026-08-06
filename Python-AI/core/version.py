@@ -17,12 +17,7 @@ class Version:
     stage: str = "stable"
 
     def __str__(self) -> str:
-        return (
-            f"{self.major}."
-            f"{self.minor}."
-            f"{self.patch}-"
-            f"{self.stage}"
-        )
+        return f"{self.major}." f"{self.minor}." f"{self.patch}-" f"{self.stage}"
 
 
 APP_VERSION = Version(

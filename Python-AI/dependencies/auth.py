@@ -14,8 +14,9 @@ to ``core.security``.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from functools import lru_cache
-from typing import Annotated, Callable, Final, NoReturn, Optional, Sequence
+from typing import Annotated, Final, NoReturn
 
 from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import (
@@ -23,6 +24,7 @@ from fastapi.security import (
     HTTPAuthorizationCredentials,
     HTTPBearer,
 )
+from schemas.user import UserInfo
 
 from core.config import Settings, get_settings
 from core.security import (
@@ -33,16 +35,18 @@ from core.security import (
     check_user_is_active,
     has_any_role,
     has_permission,
-    validate_api_key as _validate_api_key,
     validate_token,
 )
-from schemas.user import UserInfo
+from core.security import (
+    validate_api_key as _validate_api_key,
+)
 
 # ---------------------------------------------------------------------------
 # Lazy configuration access (no import‑time calls to get_settings())
 # ---------------------------------------------------------------------------
 
-_settings: Optional[Settings] = None
+_settings: Settings | None = None
+
 
 def _get_settings() -> Settings:
     """Thread‑safe, cached access to application settings."""
@@ -68,6 +72,7 @@ def _get_api_key_header_name() -> str:
 # Security scheme factories (no module‑level instantiation)
 # ---------------------------------------------------------------------------
 
+
 def _bearer_scheme() -> HTTPBearer:
     return HTTPBearer(auto_error=False)
 
@@ -86,8 +91,10 @@ def _api_key_scheme() -> APIKeyHeader:
 
 from typing import TypedDict
 
+
 class JWTClaims(TypedDict, total=False):
     """Representation of a decoded and validated JWT payload."""
+
     sub: str
     username: str
     is_active: bool
@@ -99,9 +106,10 @@ class JWTClaims(TypedDict, total=False):
 # Exception mapping (single central converter)
 # ---------------------------------------------------------------------------
 
+
 def _security_exception_to_http(
     exc: SecurityError,
-    extra_headers: Optional[dict[str, str]] = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> NoReturn:
     """Translate a ``SecurityError`` from ``core.security`` into an ``HTTPException``.
 
@@ -124,12 +132,15 @@ def _security_exception_to_http(
     if hasattr(exc, "http_headers"):
         headers.update(exc.http_headers)
 
-    raise HTTPException(status_code=status_code, detail=str(exc), headers=headers or None)
+    raise HTTPException(
+        status_code=status_code, detail=str(exc), headers=headers or None
+    )
 
 
 # ---------------------------------------------------------------------------
 # Payload → UserInfo adapter
 # ---------------------------------------------------------------------------
+
 
 def _claims_to_user(claims: JWTClaims) -> UserInfo:
     """Build a ``UserInfo`` instance from validated JWT claims."""
@@ -151,9 +162,10 @@ def _claims_to_user(claims: JWTClaims) -> UserInfo:
 # Public dependency callables
 # ---------------------------------------------------------------------------
 
+
 def verify_bearer_token(
     credentials: Annotated[
-        Optional[HTTPAuthorizationCredentials],
+        HTTPAuthorizationCredentials | None,
         Security(_bearer_scheme),
     ] = None,
 ) -> JWTClaims:
@@ -215,10 +227,10 @@ def get_current_user(
 
 def get_optional_user(
     credentials: Annotated[
-        Optional[HTTPAuthorizationCredentials],
+        HTTPAuthorizationCredentials | None,
         Security(_optional_bearer_scheme),
     ] = None,
-) -> Optional[UserInfo]:
+) -> UserInfo | None:
     """Return the authenticated user if a valid token is present, else ``None``.
 
     Unlike :func:`get_current_user`, missing or invalid tokens do **not**
@@ -323,8 +335,9 @@ def get_admin_user(
 # API‑Key verification
 # ---------------------------------------------------------------------------
 
+
 def verify_api_key(
-    api_key: Annotated[Optional[str], Security(_api_key_scheme)] = None,
+    api_key: Annotated[str | None, Security(_api_key_scheme)] = None,
 ) -> str:
     """Verify a request‑scoped API key.
 
@@ -355,6 +368,7 @@ def verify_api_key(
 # ---------------------------------------------------------------------------
 # Authorisation factories (roles and permissions)
 # ---------------------------------------------------------------------------
+
 
 def require_roles(*required_roles: str) -> Callable[..., UserInfo]:
     """Create a dependency that requires at least one of the given roles.
@@ -436,7 +450,7 @@ def require_permissions(*required_permissions: str) -> Callable[..., UserInfo]:
 CurrentUserDep = Annotated[UserInfo, Depends(get_current_user)]
 CurrentActiveUserDep = Annotated[UserInfo, Depends(get_current_active_user)]
 CurrentAdminDep = Annotated[UserInfo, Depends(get_admin_user)]
-OptionalUserDep = Annotated[Optional[UserInfo], Depends(get_optional_user)]
+OptionalUserDep = Annotated[UserInfo | None, Depends(get_optional_user)]
 BearerCredentialsDep = Annotated[HTTPAuthorizationCredentials, Security(_bearer_scheme)]
 APIKeyDep = Annotated[str, Depends(verify_api_key)]
 
@@ -446,20 +460,20 @@ APIKeyDep = Annotated[str, Depends(verify_api_key)]
 # ---------------------------------------------------------------------------
 
 __all__ = [
-    "UserInfo",
-    "verify_bearer_token",
-    "verify_api_key",
-    "get_current_user",
-    "get_optional_user",
-    "get_current_user_id",
-    "get_current_active_user",
-    "get_admin_user",
-    "require_roles",
-    "require_permissions",
-    "CurrentUserDep",
+    "APIKeyDep",
+    "BearerCredentialsDep",
     "CurrentActiveUserDep",
     "CurrentAdminDep",
+    "CurrentUserDep",
     "OptionalUserDep",
-    "BearerCredentialsDep",
-    "APIKeyDep",
+    "UserInfo",
+    "get_admin_user",
+    "get_current_active_user",
+    "get_current_user",
+    "get_current_user_id",
+    "get_optional_user",
+    "require_permissions",
+    "require_roles",
+    "verify_api_key",
+    "verify_bearer_token",
 ]

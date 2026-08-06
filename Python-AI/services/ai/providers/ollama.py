@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
+from collections.abc import AsyncGenerator
+from typing import Any
 
 import httpx
 
@@ -40,7 +41,7 @@ class OllamaProvider(BaseAIProvider):
         self.provider_id: str = "ollama"
         self.display_name: str = "Ollama Local AI"
         self.default_model: str = "llama3"
-        self.supported_models: List[str] = [
+        self.supported_models: list[str] = [
             "llama3",
             "llama3.1",
             "llama3.2",
@@ -52,7 +53,9 @@ class OllamaProvider(BaseAIProvider):
             "codellama",
         ]
         self.base_url: str = (
-            str(settings.ai.base_url) if settings.ai.base_url else "http://localhost:11434"
+            str(settings.ai.base_url)
+            if settings.ai.base_url
+            else "http://localhost:11434"
         )
 
     def _get_client(self) -> httpx.AsyncClient:
@@ -62,8 +65,8 @@ class OllamaProvider(BaseAIProvider):
     async def generate_response(
         self,
         request: ChatRequest,
-        history: List[Dict[str, Any]],
-    ) -> Tuple[str, TokenUsage]:
+        history: list[dict[str, Any]],
+    ) -> tuple[str, TokenUsage]:
         """Generate a complete text response and token usage stats using Ollama.
 
         Args:
@@ -90,7 +93,7 @@ class OllamaProvider(BaseAIProvider):
             },
         }
 
-        async def _call_ollama() -> Tuple[str, TokenUsage]:
+        async def _call_ollama() -> tuple[str, TokenUsage]:
             try:
                 res = await client.post("/api/chat", json=payload)
                 if res.status_code != 200:
@@ -122,7 +125,7 @@ class OllamaProvider(BaseAIProvider):
     async def generate_stream(
         self,
         request: ChatRequest,
-        history: List[Dict[str, Any]],
+        history: list[dict[str, Any]],
     ) -> AsyncGenerator[str, None]:
         """Stream generated token chunks using Ollama streaming API.
 
@@ -176,7 +179,7 @@ class OllamaProvider(BaseAIProvider):
         except httpx.RequestError as exc:
             raise NetworkErrorException(self.provider_id, str(exc))
 
-    async def check_health(self) -> Tuple[bool, Optional[float], str]:
+    async def check_health(self) -> tuple[bool, float | None, str]:
         """Perform a health ping test against local Ollama server.
 
         Returns:
@@ -191,4 +194,4 @@ class OllamaProvider(BaseAIProvider):
                 return True, round(latency, 2), "Healthy"
             return False, None, f"Status code {res.status_code}"
         except Exception as exc:
-            return False, None, f"Ollama ping failed: {str(exc)}"
+            return False, None, f"Ollama ping failed: {exc!s}"

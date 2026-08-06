@@ -11,7 +11,7 @@ making them easy to compose and test.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import Depends, Header, Query, Request
@@ -109,9 +109,7 @@ def get_user_agent(
 
 def get_pagination(
     page: Annotated[int, Query(ge=1, description="Page number (1‑based).")] = 1,
-    page_size: Annotated[
-        int, Query(ge=1, le=100, description="Items per page.")
-    ] = 20,
+    page_size: Annotated[int, Query(ge=1, le=100, description="Items per page.")] = 20,
 ) -> PaginationRequest:
     """Return a validated :class:`PaginationRequest` from query parameters."""
     return PaginationRequest(page=page, page_size=page_size)
@@ -119,12 +117,8 @@ def get_pagination(
 
 def get_search_parameters(
     query: Annotated[str, Query(description="Free‑text search query.")] = "",
-    limit: Annotated[
-        int, Query(ge=1, le=200, description="Max items returned.")
-    ] = 20,
-    offset: Annotated[
-        int, Query(ge=0, description="Items to skip.")
-    ] = 0,
+    limit: Annotated[int, Query(ge=1, le=200, description="Max items returned.")] = 20,
+    offset: Annotated[int, Query(ge=0, description="Items to skip.")] = 0,
     sort: Annotated[
         str | None,
         Query(
@@ -160,7 +154,7 @@ def get_request_context(
         request_id=request_id,
         client_ip=client_ip,
         user_agent=user_agent,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
     )
 
 
@@ -171,4 +165,4 @@ def get_current_timestamp() -> datetime:
     multiple parts of a single request (the timestamp is generated
     each time the dependency is resolved).
     """
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)

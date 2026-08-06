@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import traceback
-from datetime import datetime, timezone
+from collections.abc import Mapping
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Mapping, Optional
+from typing import Any
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -44,7 +45,7 @@ class ApplicationError(Exception):
         *,
         code: ErrorCode | str = ErrorCode.APPLICATION_ERROR,
         status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR,
-        details: Optional[Mapping[str, Any]] = None,
+        details: Mapping[str, Any] | None = None,
     ) -> None:
         self.message = message
         self.code = code if isinstance(code, str) else code.value
@@ -56,7 +57,11 @@ class ApplicationError(Exception):
 class AuthenticationError(ApplicationError):
     """Raised when authentication fails."""
 
-    def __init__(self, message: str = "Authentication failed", details: Optional[Mapping[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        message: str = "Authentication failed",
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
         super().__init__(
             message,
             code=ErrorCode.AUTHENTICATION_ERROR,
@@ -68,7 +73,9 @@ class AuthenticationError(ApplicationError):
 class AuthorizationError(ApplicationError):
     """Raised when a caller lacks required authorization."""
 
-    def __init__(self, message: str = "Not authorized", details: Optional[Mapping[str, Any]] = None) -> None:
+    def __init__(
+        self, message: str = "Not authorized", details: Mapping[str, Any] | None = None
+    ) -> None:
         super().__init__(
             message,
             code=ErrorCode.AUTHORIZATION_ERROR,
@@ -80,7 +87,11 @@ class AuthorizationError(ApplicationError):
 class ValidationError(ApplicationError):
     """Raised when request or domain validation fails."""
 
-    def __init__(self, message: str = "Validation failed", details: Optional[Mapping[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        message: str = "Validation failed",
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
         super().__init__(
             message,
             code=ErrorCode.VALIDATION_ERROR,
@@ -92,7 +103,11 @@ class ValidationError(ApplicationError):
 class ResourceNotFoundError(ApplicationError):
     """Raised when a requested resource does not exist."""
 
-    def __init__(self, message: str = "Resource not found", details: Optional[Mapping[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        message: str = "Resource not found",
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
         super().__init__(
             message,
             code=ErrorCode.RESOURCE_NOT_FOUND,
@@ -104,7 +119,9 @@ class ResourceNotFoundError(ApplicationError):
 class ConflictError(ApplicationError):
     """Raised when a resource already exists or conflicts with state."""
 
-    def __init__(self, message: str = "Conflict", details: Optional[Mapping[str, Any]] = None) -> None:
+    def __init__(
+        self, message: str = "Conflict", details: Mapping[str, Any] | None = None
+    ) -> None:
         super().__init__(
             message,
             code=ErrorCode.CONFLICT_ERROR,
@@ -116,7 +133,11 @@ class ConflictError(ApplicationError):
 class DatabaseError(ApplicationError):
     """Raised when a persistence layer operation fails."""
 
-    def __init__(self, message: str = "Database operation failed", details: Optional[Mapping[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        message: str = "Database operation failed",
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
         super().__init__(
             message,
             code=ErrorCode.DATABASE_ERROR,
@@ -128,7 +149,11 @@ class DatabaseError(ApplicationError):
 class ExternalServiceError(ApplicationError):
     """Raised when an upstream external service fails."""
 
-    def __init__(self, message: str = "External service error", details: Optional[Mapping[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        message: str = "External service error",
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
         super().__init__(
             message,
             code=ErrorCode.EXTERNAL_SERVICE_ERROR,
@@ -140,7 +165,11 @@ class ExternalServiceError(ApplicationError):
 class AIServiceError(ApplicationError):
     """Raised when an AI provider operation fails."""
 
-    def __init__(self, message: str = "AI service error", details: Optional[Mapping[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        message: str = "AI service error",
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
         super().__init__(
             message,
             code=ErrorCode.AI_SERVICE_ERROR,
@@ -152,7 +181,11 @@ class AIServiceError(ApplicationError):
 class RateLimitError(ApplicationError):
     """Raised when a caller exceeds a rate limit."""
 
-    def __init__(self, message: str = "Rate limit exceeded", details: Optional[Mapping[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        message: str = "Rate limit exceeded",
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
         super().__init__(
             message,
             code=ErrorCode.RATE_LIMIT_ERROR,
@@ -164,7 +197,11 @@ class RateLimitError(ApplicationError):
 class ConfigurationError(ApplicationError):
     """Raised when required configuration is missing or invalid."""
 
-    def __init__(self, message: str = "Configuration error", details: Optional[Mapping[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        message: str = "Configuration error",
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
         super().__init__(
             message,
             code=ErrorCode.CONFIGURATION_ERROR,
@@ -176,7 +213,11 @@ class ConfigurationError(ApplicationError):
 class InternalServerError(ApplicationError):
     """Raised for unexpected internal failures."""
 
-    def __init__(self, message: str = "Internal server error", details: Optional[Mapping[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        message: str = "Internal server error",
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
         super().__init__(
             message,
             code=ErrorCode.INTERNAL_SERVER_ERROR,
@@ -196,15 +237,21 @@ class ErrorResponseModel(BaseModel):
     path: str = Field(default="")
     request_id: str = Field(default="")
     correlation_id: str | None = Field(default=None)
-    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now(UTC).isoformat()
+    )
 
 
 def _get_request_id(request: Request) -> str:
-    return request.headers.get("x-request-id") or request.headers.get("X-Request-ID") or ""
+    return (
+        request.headers.get("x-request-id") or request.headers.get("X-Request-ID") or ""
+    )
 
 
 def _get_correlation_id(request: Request) -> str | None:
-    return request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-ID")
+    return request.headers.get("x-correlation-id") or request.headers.get(
+        "X-Correlation-ID"
+    )
 
 
 def _build_error_response(
@@ -213,8 +260,8 @@ def _build_error_response(
     message: str,
     code: str,
     status_code: int,
-    details: Optional[Mapping[str, Any]] = None,
-    exc: Optional[Exception] = None,
+    details: Mapping[str, Any] | None = None,
+    exc: Exception | None = None,
     include_traceback: bool = False,
 ) -> JSONResponse:
     payload = ErrorResponseModel(
@@ -227,7 +274,9 @@ def _build_error_response(
         correlation_id=_get_correlation_id(request),
     )
     if include_traceback and exc is not None:
-        payload.details["traceback"] = "\n".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        payload.details["traceback"] = "\n".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__)
+        )
     return JSONResponse(status_code=status_code, content=payload.model_dump())
 
 
@@ -246,7 +295,9 @@ def _log_exception(
         "status_code": status_code,
     }
     if include_traceback:
-        extra["traceback"] = traceback.format_exception(type(exc), exc, exc.__traceback__)
+        extra["traceback"] = traceback.format_exception(
+            type(exc), exc, exc.__traceback__
+        )
     logger.exception(
         "Unhandled exception",
         extra=extra,
@@ -257,8 +308,15 @@ def register_exception_handlers(app: FastAPI) -> None:
     """Register centralized FastAPI exception handlers for the application."""
 
     @app.exception_handler(ApplicationError)
-    async def handle_application_error(request: Request, exc: ApplicationError) -> JSONResponse:
-        _log_exception(request=request, exc=exc, status_code=exc.status_code, include_traceback=False)
+    async def handle_application_error(
+        request: Request, exc: ApplicationError
+    ) -> JSONResponse:
+        _log_exception(
+            request=request,
+            exc=exc,
+            status_code=exc.status_code,
+            include_traceback=False,
+        )
         return _build_error_response(
             request=request,
             message=exc.message,
@@ -268,8 +326,15 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(StarletteHTTPException)
-    async def handle_http_exception(request: Request, exc: StarletteHTTPException) -> JSONResponse:
-        _log_exception(request=request, exc=exc, status_code=exc.status_code, include_traceback=False)
+    async def handle_http_exception(
+        request: Request, exc: StarletteHTTPException
+    ) -> JSONResponse:
+        _log_exception(
+            request=request,
+            exc=exc,
+            status_code=exc.status_code,
+            include_traceback=False,
+        )
         return _build_error_response(
             request=request,
             message=exc.detail if isinstance(exc.detail, str) else "HTTP error",
@@ -279,7 +344,9 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(RequestValidationError)
-    async def handle_request_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    async def handle_request_validation_error(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
         details: dict[str, Any] = {
             "errors": [
                 {
@@ -290,7 +357,12 @@ def register_exception_handlers(app: FastAPI) -> None:
                 for error in exc.errors()
             ]
         }
-        _log_exception(request=request, exc=exc, status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, include_traceback=False)
+        _log_exception(
+            request=request,
+            exc=exc,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            include_traceback=False,
+        )
         return _build_error_response(
             request=request,
             message="Request validation failed",
@@ -300,8 +372,15 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(ValidationError)
-    async def handle_validation_error(request: Request, exc: ValidationError) -> JSONResponse:
-        _log_exception(request=request, exc=exc, status_code=exc.status_code, include_traceback=False)
+    async def handle_validation_error(
+        request: Request, exc: ValidationError
+    ) -> JSONResponse:
+        _log_exception(
+            request=request,
+            exc=exc,
+            status_code=exc.status_code,
+            include_traceback=False,
+        )
         return _build_error_response(
             request=request,
             message=exc.message,
@@ -312,7 +391,12 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
-        _log_exception(request=request, exc=exc, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, include_traceback=True)
+        _log_exception(
+            request=request,
+            exc=exc,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            include_traceback=True,
+        )
         return _build_error_response(
             request=request,
             message="Internal server error",

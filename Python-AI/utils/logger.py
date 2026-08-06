@@ -9,20 +9,20 @@ import os
 import re
 import sys
 from contextvars import ContextVar
-from datetime import datetime, timezone
-from logging import Filter, Formatter, Handler, LogRecord
+from datetime import UTC, datetime
+from logging import Filter, Formatter, LogRecord
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 from pathlib import Path
 from threading import Lock
-from typing import Any, Final, Optional, Union
+from typing import Any, Final
 
 from core.config import get_settings
 
-REQUEST_ID: Final[ContextVar[Optional[str]]] = ContextVar(
+REQUEST_ID: Final[ContextVar[str | None]] = ContextVar(
     "request_id",
     default=None,
 )
-CORRELATION_ID: Final[ContextVar[Optional[str]]] = ContextVar(
+CORRELATION_ID: Final[ContextVar[str | None]] = ContextVar(
     "correlation_id",
     default=None,
 )
@@ -48,7 +48,9 @@ _CONFIGURED: bool = False
 
 # Pre‑compiled regex patterns for performance
 _MASK_PATTERNS: Final[tuple[re.Pattern, ...]] = (
-    re.compile(r"(?i)(password|passwd|pwd|secret|token|jwt|api[_-]?key|authorization|cookie)\s*[:=]\s*([^\s,;]+)"),
+    re.compile(
+        r"(?i)(password|passwd|pwd|secret|token|jwt|api[_-]?key|authorization|cookie)\s*[:=]\s*([^\s,;]+)"
+    ),
     re.compile(r"(?i)(mongodb://[^\s]+)"),
     re.compile(r"(?i)(bearer\s+[a-z0-9\-_.~+/]+=*)"),
 )
@@ -76,17 +78,47 @@ class SensitiveDataFilter(Filter):
         # Mask extra attributes (from `extra={...}` in logging calls)
         # Internal/safe attributes to skip
         safe_keys = {
-            "msg", "args", "exc_info", "exc_text", "stack_info", "created", "asctime",
-            "msecs", "relativeCreated", "thread", "threadName", "process", "processName",
-            "module", "funcName", "lineno", "name", "levelname", "levelno", "pathname",
-            "filename", "exc_info", "exc_text", "stack_info", "request_id", "correlation_id"
+            "msg",
+            "args",
+            "exc_info",
+            "exc_text",
+            "stack_info",
+            "created",
+            "asctime",
+            "msecs",
+            "relativeCreated",
+            "thread",
+            "threadName",
+            "process",
+            "processName",
+            "module",
+            "funcName",
+            "lineno",
+            "name",
+            "levelname",
+            "levelno",
+            "pathname",
+            "filename",
+            "request_id",
+            "correlation_id",
         }
         for key, value in record.__dict__.items():
             if key in safe_keys:
                 continue
             # If the key itself is sensitive, redact the value
-            if any(sens in key.lower() for sens in ('password', 'secret', 'token', 'jwt', 'api_key', 'authorization', 'cookie')):
-                setattr(record, key, '[REDACTED]')
+            if any(
+                sens in key.lower()
+                for sens in (
+                    "password",
+                    "secret",
+                    "token",
+                    "jwt",
+                    "api_key",
+                    "authorization",
+                    "cookie",
+                )
+            ):
+                setattr(record, key, "[REDACTED]")
             else:
                 # Recursively mask the value (in case it's a dict/list)
                 setattr(record, key, self._mask_value(value))
@@ -101,7 +133,14 @@ class SensitiveDataFilter(Filter):
         if isinstance(value, str):
             return self._mask_text(value)
         if isinstance(value, dict):
-            return {k: self._mask_value(v) if k.lower() not in _SENSITIVE_KEYS else "[REDACTED]" for k, v in value.items()}
+            return {
+                k: (
+                    self._mask_value(v)
+                    if k.lower() not in _SENSITIVE_KEYS
+                    else "[REDACTED]"
+                )
+                for k, v in value.items()
+            }
         if isinstance(value, (list, tuple, set)):
             return type(value)(self._mask_value(item) for item in value)
         return value
@@ -112,7 +151,9 @@ class JsonFormatter(Formatter):
 
     def format(self, record: LogRecord) -> str:
         payload: dict[str, Any] = {
-            "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "timestamp": datetime.fromtimestamp(
+                record.created, tz=UTC
+            ).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "module": record.module,
@@ -130,9 +171,9 @@ class JsonFormatter(Formatter):
 class PlainFormatter(Formatter):
     """Formatter that emits human-readable logs with millisecond precision."""
 
-    def formatTime(self, record: LogRecord, datefmt: Optional[str] = None) -> str:
+    def formatTime(self, record: LogRecord, datefmt: str | None = None) -> str:
         # Use UTC time and include milliseconds
-        dt = datetime.fromtimestamp(record.created, tz=timezone.utc)
+        dt = datetime.fromtimestamp(record.created, tz=UTC)
         if datefmt:
             return dt.strftime(datefmt)
         # Default: ISO8601 with milliseconds and UTC offset (Z means UTC)
@@ -170,7 +211,7 @@ def _get_log_level(level_name: str) -> int:
     return getattr(logging, level_name.upper(), logging.INFO)
 
 
-def _resolve_log_path(path_value: Optional[Union[str, os.PathLike[str]]]) -> Path:
+def _resolve_log_path(path_value: str | os.PathLike[str] | None) -> Path:
     if path_value is None:
         path_value = "storage/logs/brahmastra.log"
     path = Path(path_value).expanduser()
@@ -248,7 +289,7 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
 
-def set_request_id(request_id: Optional[str]) -> None:
+def set_request_id(request_id: str | None) -> None:
     """Set the request ID for the current context."""
     REQUEST_ID.set(request_id)
 
@@ -258,7 +299,7 @@ def clear_request_id() -> None:
     REQUEST_ID.set(None)
 
 
-def set_correlation_id(correlation_id: Optional[str]) -> None:
+def set_correlation_id(correlation_id: str | None) -> None:
     """Set the correlation ID for the current context."""
     CORRELATION_ID.set(correlation_id)
 
@@ -268,7 +309,7 @@ def clear_correlation_id() -> None:
     CORRELATION_ID.set(None)
 
 
-def get_contextual_log_fields() -> dict[str, Optional[str]]:
+def get_contextual_log_fields() -> dict[str, str | None]:
     """Return the current request and correlation IDs."""
     return {
         "request_id": REQUEST_ID.get(),

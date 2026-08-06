@@ -4,22 +4,32 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Optional
+from typing import Any
 
 from fastapi import FastAPI
 
 from core.config import get_settings
 from core.exceptions import ConfigurationError, register_exception_handlers
-from dependencies.database import close_mongo_connection, get_database_health, init_mongo_client
+from dependencies.database import (
+    close_mongo_connection,
+    get_database_health,
+    init_mongo_client,
+)
 from utils.logger import get_logger
 
 try:
     from middleware import register_middleware
 except ImportError:
+
     def register_middleware(app: FastAPI) -> None:
         """No-op middleware registration placeholder when middleware is not configured."""
-        logger.debug("Middleware registration skipped", extra={"event": "middleware_registration_skipped"})
+        logger.debug(
+            "Middleware registration skipped",
+            extra={"event": "middleware_registration_skipped"},
+        )
+
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -33,7 +43,9 @@ class LifecycleHooks:
 
     async def start(self) -> None:
         """Start optional background services."""
-        logger.debug("Lifecycle hooks initialized", extra={"event": "lifecycle_hooks_start"})
+        logger.debug(
+            "Lifecycle hooks initialized", extra={"event": "lifecycle_hooks_start"}
+        )
 
     async def stop(self) -> None:
         """Stop optional background services and wait for cleanup."""
@@ -106,7 +118,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             },
         )
         yield
-    except Exception as exc:
+    except Exception:
         app.state.startup_duration_seconds = round(time.perf_counter() - started_at, 6)
         logger.exception(
             "Application startup failed",
@@ -122,7 +134,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         raise
     finally:
         shutdown_started_at = time.perf_counter()
-        logger.info("Application shutdown initiated", extra={"event": "shutdown_started"})
+        logger.info(
+            "Application shutdown initiated", extra={"event": "shutdown_started"}
+        )
         try:
             await hooks.stop()
             await close_mongo_connection()
@@ -130,11 +144,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 "Application shutdown completed",
                 extra={
                     "event": "shutdown_completed",
-                    "shutdown_duration_seconds": round(time.perf_counter() - shutdown_started_at, 6),
+                    "shutdown_duration_seconds": round(
+                        time.perf_counter() - shutdown_started_at, 6
+                    ),
                 },
             )
         except Exception:
-            logger.exception("Application shutdown failed", extra={"event": "shutdown_failed"})
+            logger.exception(
+                "Application shutdown failed", extra={"event": "shutdown_failed"}
+            )
 
 
 __all__ = ["LifecycleHooks", "lifespan"]

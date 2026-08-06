@@ -8,7 +8,8 @@ providing native async execution, streaming token delivery, token usage extracti
 from __future__ import annotations
 
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from core.config import Settings
 from schemas.chat import ChatRequest, TokenUsage
@@ -43,17 +44,16 @@ class OpenAIProvider(BaseAIProvider):
         self.provider_id: str = "openai"
         self.display_name: str = "OpenAI"
         self.default_model: str = (
-            getattr(settings.ai, "openai_model", None)
-            or "gpt-5-mini"
+            getattr(settings.ai, "openai_model", None) or "gpt-5-mini"
         )
-        self.supported_models: List[str] = [
+        self.supported_models: list[str] = [
             "gpt-5",
             "gpt-5-mini",
             "gpt-4.1",
             "gpt-4o",
             "gpt-4o-mini",
         ]
-        self._client: Optional[Any] = None
+        self._client: Any | None = None
 
     def _get_client(self) -> Any:
         """Singleton accessor for the AsyncOpenAI Client.
@@ -75,16 +75,29 @@ class OpenAIProvider(BaseAIProvider):
                 raise APIKeyMissingException(self.provider_id)
             try:
                 from openai import AsyncOpenAI
+
                 self._client = AsyncOpenAI(api_key=api_key)
-                self.logger.info("Initialized AsyncOpenAI singleton client", extra={"provider": self.provider_id})
+                self.logger.info(
+                    "Initialized AsyncOpenAI singleton client",
+                    extra={"provider": self.provider_id},
+                )
             except APIKeyMissingException:
                 raise
             except ImportError:
-                self.logger.error("openai package not installed", extra={"provider": self.provider_id})
-                raise ProviderErrorException(self.provider_id, "openai package is not installed. Run 'pip install openai'.")
+                self.logger.error(
+                    "openai package not installed", extra={"provider": self.provider_id}
+                )
+                raise ProviderErrorException(
+                    self.provider_id,
+                    "openai package is not installed. Run 'pip install openai'.",
+                )
             except Exception as exc:
-                self.logger.error("Failed to initialize AsyncOpenAI client", extra={"error": str(exc)})
-                raise ProviderErrorException(self.provider_id, f"Client initialization failed: {str(exc)}")
+                self.logger.error(
+                    "Failed to initialize AsyncOpenAI client", extra={"error": str(exc)}
+                )
+                raise ProviderErrorException(
+                    self.provider_id, f"Client initialization failed: {exc!s}"
+                )
         return self._client
 
     def _map_sdk_exception(self, exc: Exception, model_name: str) -> Exception:
@@ -101,24 +114,37 @@ class OpenAIProvider(BaseAIProvider):
         err_lower = err_msg.lower()
 
         status_code = getattr(exc, "status_code", None)
-        if status_code == 401 or "unauthorized" in err_lower or "api_key" in err_lower or "authentication" in err_lower:
+        if (
+            status_code == 401
+            or "unauthorized" in err_lower
+            or "api_key" in err_lower
+            or "authentication" in err_lower
+        ):
             return APIKeyMissingException(self.provider_id)
         elif status_code == 429 or "rate limit" in err_lower:
             return RateLimitException(self.provider_id, err_msg)
-        elif status_code == 404 or "model_not_found" in err_lower or "invalid model" in err_lower:
+        elif (
+            status_code == 404
+            or "model_not_found" in err_lower
+            or "invalid model" in err_lower
+        ):
             return InvalidModelException(model_name, self.provider_id)
         elif "timeout" in err_lower or "timed out" in err_lower:
-            return TimeoutException(self.provider_id, float(self.settings.ai.timeout_seconds))
+            return TimeoutException(
+                self.provider_id, float(self.settings.ai.timeout_seconds)
+            )
         elif "connection" in err_lower or "network" in err_lower or "dns" in err_lower:
             return NetworkErrorException(self.provider_id, err_msg)
 
-        return ProviderErrorException(self.provider_id, err_msg, status_code=status_code or 502)
+        return ProviderErrorException(
+            self.provider_id, err_msg, status_code=status_code or 502
+        )
 
     async def generate_response(
         self,
         request: ChatRequest,
-        history: List[Dict[str, Any]],
-    ) -> Tuple[str, TokenUsage]:
+        history: list[dict[str, Any]],
+    ) -> tuple[str, TokenUsage]:
         """Generate a complete text response and token usage stats using OpenAI.
 
         Args:
@@ -132,12 +158,16 @@ class OpenAIProvider(BaseAIProvider):
         model_name = self.resolve_model(request)
         messages = self.prepare_messages(request, history)
 
-        async def _call_openai() -> Tuple[str, TokenUsage]:
+        async def _call_openai() -> tuple[str, TokenUsage]:
             try:
                 response = await client.chat.completions.create(
                     model=model_name,
                     messages=messages,
-                    temperature=request.temperature if request.temperature is not None else self.settings.ai.temperature,
+                    temperature=(
+                        request.temperature
+                        if request.temperature is not None
+                        else self.settings.ai.temperature
+                    ),
                     max_tokens=request.max_tokens or self.settings.ai.max_output_tokens,
                 )
                 choices = getattr(response, "choices", [])
@@ -153,7 +183,7 @@ class OpenAIProvider(BaseAIProvider):
     async def generate_stream(
         self,
         request: ChatRequest,
-        history: List[Dict[str, Any]],
+        history: list[dict[str, Any]],
     ) -> AsyncGenerator[str, None]:
         """Stream generated token chunks using OpenAI streaming completions.
 
@@ -172,7 +202,11 @@ class OpenAIProvider(BaseAIProvider):
             stream = await client.chat.completions.create(
                 model=model_name,
                 messages=messages,
-                temperature=request.temperature if request.temperature is not None else self.settings.ai.temperature,
+                temperature=(
+                    request.temperature
+                    if request.temperature is not None
+                    else self.settings.ai.temperature
+                ),
                 max_tokens=request.max_tokens or self.settings.ai.max_output_tokens,
                 stream=True,
             )
@@ -185,7 +219,7 @@ class OpenAIProvider(BaseAIProvider):
         except Exception as exc:
             raise self._map_sdk_exception(exc, model_name)
 
-    async def check_health(self) -> Tuple[bool, Optional[float], str]:
+    async def check_health(self) -> tuple[bool, float | None, str]:
         """Perform a quick health ping test against OpenAI.
 
         Returns:
@@ -203,14 +237,16 @@ class OpenAIProvider(BaseAIProvider):
             return True, latency_ms, "Healthy"
         except Exception as exc:
             err_mapped = self._map_sdk_exception(exc, self.default_model)
-            return False, None, f"OpenAI health check failed: {str(err_mapped)}"
+            return False, None, f"OpenAI health check failed: {err_mapped!s}"
 
     async def startup(self) -> None:
         """Initialize client lazily during startup."""
         try:
             self._get_client()
         except Exception as exc:
-            self.logger.warning("OpenAI startup client init deferred", extra={"error": str(exc)})
+            self.logger.warning(
+                "OpenAI startup client init deferred", extra={"error": str(exc)}
+            )
 
     async def shutdown(self) -> None:
         """Clean up provider resources during shutdown."""

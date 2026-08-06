@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import Optional
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
@@ -61,7 +60,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         )
 
     @staticmethod
-    def _validate_uuid4(value: Optional[str]) -> Optional[str]:
+    def _validate_uuid4(value: str | None) -> str | None:
         """Validate a string as a canonical UUIDv4.
 
         Args:

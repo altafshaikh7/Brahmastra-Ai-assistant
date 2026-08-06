@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from core.config import Settings
 from schemas.chat import ChatRequest, TokenUsage
@@ -42,18 +43,19 @@ class GeminiProvider(BaseAIProvider):
         super().__init__(settings)
         self.provider_id: str = "gemini"
         self.display_name: str = "Google Gemini"
-        self.default_model: str = (
-            getattr(settings.ai, "gemini_model", None)
-            or (settings.ai.model_name if settings.ai.provider == "gemini" else "gemini-2.5-flash")
+        self.default_model: str = getattr(settings.ai, "gemini_model", None) or (
+            settings.ai.model_name
+            if settings.ai.provider == "gemini"
+            else "gemini-2.5-flash"
         )
-        self.supported_models: List[str] = [
+        self.supported_models: list[str] = [
             "gemini-2.5-flash",
             "gemini-2.5-pro",
             "gemini-2.0-flash",
             "gemini-1.5-pro",
             "gemini-1.5-flash",
         ]
-        self._client: Optional[Any] = None
+        self._client: Any | None = None
 
     def _get_client(self) -> Any:
         """Singleton accessor for the Google GenAI Client.
@@ -75,13 +77,22 @@ class GeminiProvider(BaseAIProvider):
                 raise APIKeyMissingException(self.provider_id)
             try:
                 from google import genai
+
                 self._client = genai.Client(api_key=api_key)
-                self.logger.info("Initialized Google GenAI singleton client", extra={"provider": self.provider_id})
+                self.logger.info(
+                    "Initialized Google GenAI singleton client",
+                    extra={"provider": self.provider_id},
+                )
             except APIKeyMissingException:
                 raise
             except Exception as exc:
-                self.logger.error("Failed to initialize Google GenAI SDK client", extra={"error": str(exc)})
-                raise ProviderErrorException(self.provider_id, f"Client initialization failed: {str(exc)}")
+                self.logger.error(
+                    "Failed to initialize Google GenAI SDK client",
+                    extra={"error": str(exc)},
+                )
+                raise ProviderErrorException(
+                    self.provider_id, f"Client initialization failed: {exc!s}"
+                )
         return self._client
 
     def _map_sdk_exception(self, exc: Exception, model_name: str) -> Exception:
@@ -99,10 +110,16 @@ class GeminiProvider(BaseAIProvider):
 
         if "api_key" in err_lower or "unauthorized" in err_lower or "401" in err_lower:
             return APIKeyMissingException(self.provider_id)
-        elif "not found" in err_lower or "invalid model" in err_lower or "404" in err_lower:
+        elif (
+            "not found" in err_lower
+            or "invalid model" in err_lower
+            or "404" in err_lower
+        ):
             return InvalidModelException(model_name, self.provider_id)
         elif "timeout" in err_lower or "deadline" in err_lower:
-            return TimeoutException(self.provider_id, float(self.settings.ai.timeout_seconds))
+            return TimeoutException(
+                self.provider_id, float(self.settings.ai.timeout_seconds)
+            )
         elif "connection" in err_lower or "network" in err_lower or "dns" in err_lower:
             return NetworkErrorException(self.provider_id, err_msg)
 
@@ -111,8 +128,8 @@ class GeminiProvider(BaseAIProvider):
     async def generate_response(
         self,
         request: ChatRequest,
-        history: List[Dict[str, Any]],
-    ) -> Tuple[str, TokenUsage]:
+        history: list[dict[str, Any]],
+    ) -> tuple[str, TokenUsage]:
         """Generate a complete text response and token usage stats using Gemini.
 
         Args:
@@ -126,7 +143,7 @@ class GeminiProvider(BaseAIProvider):
         model_name = self.resolve_model(request)
         full_prompt = self.prepare_prompt(request, history)
 
-        async def _call_gemini() -> Tuple[str, TokenUsage]:
+        async def _call_gemini() -> tuple[str, TokenUsage]:
             def _sync_generate():
                 return client.models.generate_content(
                     model=model_name,
@@ -138,7 +155,9 @@ class GeminiProvider(BaseAIProvider):
                 response = await loop.run_in_executor(None, _sync_generate)
                 response_text = getattr(response, "text", "") or ""
                 usage_metadata = getattr(response, "usage_metadata", None)
-                tokens = self.extract_token_usage(usage_metadata, full_prompt, response_text)
+                tokens = self.extract_token_usage(
+                    usage_metadata, full_prompt, response_text
+                )
                 return response_text, tokens
             except Exception as exc:
                 raise self._map_sdk_exception(exc, model_name)
@@ -148,7 +167,7 @@ class GeminiProvider(BaseAIProvider):
     async def generate_stream(
         self,
         request: ChatRequest,
-        history: List[Dict[str, Any]],
+        history: list[dict[str, Any]],
     ) -> AsyncGenerator[str, None]:
         """Stream generated token chunks using Gemini generate_content_stream.
 
@@ -179,7 +198,7 @@ class GeminiProvider(BaseAIProvider):
         except Exception as exc:
             raise self._map_sdk_exception(exc, model_name)
 
-    async def check_health(self) -> Tuple[bool, Optional[float], str]:
+    async def check_health(self) -> tuple[bool, float | None, str]:
         """Perform a quick health ping test against Google Gemini.
 
         Returns:
@@ -201,14 +220,16 @@ class GeminiProvider(BaseAIProvider):
             return True, latency_ms, "Healthy"
         except Exception as exc:
             err_mapped = self._map_sdk_exception(exc, self.default_model)
-            return False, None, f"Gemini health check failed: {str(err_mapped)}"
+            return False, None, f"Gemini health check failed: {err_mapped!s}"
 
     async def startup(self) -> None:
         """Initialize client lazily during startup."""
         try:
             self._get_client()
         except Exception as exc:
-            self.logger.warning("Gemini startup client init deferred", extra={"error": str(exc)})
+            self.logger.warning(
+                "Gemini startup client init deferred", extra={"error": str(exc)}
+            )
 
     async def shutdown(self) -> None:
         """Clean up provider resources during shutdown."""

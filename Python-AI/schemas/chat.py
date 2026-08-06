@@ -7,8 +7,9 @@ provider selection, model enumeration, token statistics, and conversation histor
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -26,7 +27,7 @@ class ChatMessage(BaseModel):
         examples=["Hello! How can you help me today?"],
     )
     timestamp: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(UTC),
         description="UTC timestamp when the message was recorded.",
     )
 
@@ -45,24 +46,24 @@ class ChatRequest(BaseModel):
         description="User input prompt or question.",
         examples=["Explain quantum computing in simple terms."],
     )
-    conversation_id: Optional[str] = Field(
+    conversation_id: str | None = Field(
         default=None,
         description="Optional unique identifier for persisting and linking conversation context.",
         examples=["conv_9f8a7b6c5d"],
     )
-    system_prompt: Optional[str] = Field(
+    system_prompt: str | None = Field(
         default=None,
         description="Optional instructions to guide model behavior and personality.",
         examples=["You are a helpful and concise technical assistant."],
     )
-    temperature: Optional[float] = Field(
+    temperature: float | None = Field(
         default=None,
         ge=0.0,
         le=2.0,
         description="Sampling temperature for randomness (0.0 = deterministic, 2.0 = creative).",
         examples=[0.7],
     )
-    max_tokens: Optional[int] = Field(
+    max_tokens: int | None = Field(
         default=None,
         ge=1,
         le=32768,
@@ -187,10 +188,21 @@ class ProviderInfo(BaseModel):
     """Metadata describing a supported AI provider."""
 
     id: str = Field(..., description="Provider identifier slug.", examples=["gemini"])
-    name: str = Field(..., description="Display name of the provider.", examples=["Google Gemini"])
-    default_model: str = Field(..., description="Default model for this provider.", examples=["gemini-2.5-flash"])
-    supported_models: List[str] = Field(..., description="List of supported model identifiers.")
-    is_active: bool = Field(..., description="Whether this provider is currently active/selected in configuration.")
+    name: str = Field(
+        ..., description="Display name of the provider.", examples=["Google Gemini"]
+    )
+    default_model: str = Field(
+        ...,
+        description="Default model for this provider.",
+        examples=["gemini-2.5-flash"],
+    )
+    supported_models: list[str] = Field(
+        ..., description="List of supported model identifiers."
+    )
+    is_active: bool = Field(
+        ...,
+        description="Whether this provider is currently active/selected in configuration.",
+    )
 
     model_config = ConfigDict(strict=False)
 
@@ -198,8 +210,12 @@ class ProviderInfo(BaseModel):
 class ProvidersResponse(BaseModel):
     """Response model for enumerating available AI providers."""
 
-    active_provider: str = Field(..., description="Currently selected active provider slug.", examples=["gemini"])
-    providers: List[ProviderInfo] = Field(..., description="List of all supported AI providers.")
+    active_provider: str = Field(
+        ..., description="Currently selected active provider slug.", examples=["gemini"]
+    )
+    providers: list[ProviderInfo] = Field(
+        ..., description="List of all supported AI providers."
+    )
 
     model_config = ConfigDict(strict=False)
 
@@ -208,9 +224,13 @@ class ModelInfo(BaseModel):
     """Metadata describing an AI model."""
 
     id: str = Field(..., description="Model identifier.", examples=["gemini-2.5-flash"])
-    name: str = Field(..., description="Display name of the model.", examples=["Gemini 2.5 Flash"])
+    name: str = Field(
+        ..., description="Display name of the model.", examples=["Gemini 2.5 Flash"]
+    )
     provider: str = Field(..., description="Provider slug.", examples=["gemini"])
-    context_window: int = Field(..., description="Maximum context window size in tokens.", examples=[1048576])
+    context_window: int = Field(
+        ..., description="Maximum context window size in tokens.", examples=[1048576]
+    )
 
     model_config = ConfigDict(strict=False)
 
@@ -219,7 +239,9 @@ class ModelsResponse(BaseModel):
     """Response model for enumerating available models."""
 
     provider: str = Field(..., description="Provider slug.", examples=["gemini"])
-    models: List[ModelInfo] = Field(..., description="List of supported models for the provider.")
+    models: list[ModelInfo] = Field(
+        ..., description="List of supported models for the provider."
+    )
 
     model_config = ConfigDict(strict=False)
 
@@ -227,10 +249,20 @@ class ModelsResponse(BaseModel):
 class AIHealthResponse(BaseModel):
     """Health check response model for the AI service."""
 
-    status: str = Field(..., description="Health status ('ok', 'degraded', 'error').", examples=["ok"])
-    provider: str = Field(..., description="Currently active provider slug.", examples=["gemini"])
-    model: str = Field(..., description="Currently active model name.", examples=["gemini-2.5-flash"])
-    latency_ms: Optional[float] = Field(default=None, description="Ping latency in milliseconds to provider API.")
-    details: Dict[str, Any] = Field(default_factory=dict, description="Additional health diagnostic details.")
+    status: str = Field(
+        ..., description="Health status ('ok', 'degraded', 'error').", examples=["ok"]
+    )
+    provider: str = Field(
+        ..., description="Currently active provider slug.", examples=["gemini"]
+    )
+    model: str = Field(
+        ..., description="Currently active model name.", examples=["gemini-2.5-flash"]
+    )
+    latency_ms: float | None = Field(
+        default=None, description="Ping latency in milliseconds to provider API."
+    )
+    details: dict[str, Any] = Field(
+        default_factory=dict, description="Additional health diagnostic details."
+    )
 
     model_config = ConfigDict(strict=False)

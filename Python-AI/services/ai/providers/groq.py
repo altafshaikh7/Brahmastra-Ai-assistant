@@ -8,7 +8,8 @@ providing native async execution, streaming, token extraction, retry resiliency,
 from __future__ import annotations
 
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from core.config import Settings
 from schemas.chat import ChatRequest, TokenUsage
@@ -43,16 +44,15 @@ class GroqProvider(BaseAIProvider):
         self.provider_id: str = "groq"
         self.display_name: str = "Groq AI"
         self.default_model: str = (
-            getattr(settings.ai, "groq_model", None)
-            or "llama-3.3-70b-versatile"
+            getattr(settings.ai, "groq_model", None) or "llama-3.3-70b-versatile"
         )
-        self.supported_models: List[str] = [
+        self.supported_models: list[str] = [
             "llama-3.3-70b-versatile",
             "deepseek-r1-distill-llama-70b",
             "qwen/qwen3-32b",
             "mixtral-8x7b-32768",
         ]
-        self._client: Optional[Any] = None
+        self._client: Any | None = None
 
     def _get_client(self) -> Any:
         """Singleton accessor for the AsyncGroq Client.
@@ -74,13 +74,21 @@ class GroqProvider(BaseAIProvider):
                 raise APIKeyMissingException(self.provider_id)
             try:
                 from groq import AsyncGroq
+
                 self._client = AsyncGroq(api_key=api_key)
-                self.logger.info("Initialized AsyncGroq singleton client", extra={"provider": self.provider_id})
+                self.logger.info(
+                    "Initialized AsyncGroq singleton client",
+                    extra={"provider": self.provider_id},
+                )
             except APIKeyMissingException:
                 raise
             except Exception as exc:
-                self.logger.error("Failed to initialize AsyncGroq client", extra={"error": str(exc)})
-                raise ProviderErrorException(self.provider_id, f"Client initialization failed: {str(exc)}")
+                self.logger.error(
+                    "Failed to initialize AsyncGroq client", extra={"error": str(exc)}
+                )
+                raise ProviderErrorException(
+                    self.provider_id, f"Client initialization failed: {exc!s}"
+                )
         return self._client
 
     def _map_sdk_exception(self, exc: Exception, model_name: str) -> Exception:
@@ -101,20 +109,28 @@ class GroqProvider(BaseAIProvider):
             return APIKeyMissingException(self.provider_id)
         elif status_code == 429 or "rate limit" in err_lower:
             return RateLimitException(self.provider_id, err_msg)
-        elif status_code == 404 or "model_not_found" in err_lower or "invalid model" in err_lower:
+        elif (
+            status_code == 404
+            or "model_not_found" in err_lower
+            or "invalid model" in err_lower
+        ):
             return InvalidModelException(model_name, self.provider_id)
         elif "timeout" in err_lower or "timed out" in err_lower:
-            return TimeoutException(self.provider_id, float(self.settings.ai.timeout_seconds))
+            return TimeoutException(
+                self.provider_id, float(self.settings.ai.timeout_seconds)
+            )
         elif "connection" in err_lower or "network" in err_lower or "dns" in err_lower:
             return NetworkErrorException(self.provider_id, err_msg)
 
-        return ProviderErrorException(self.provider_id, err_msg, status_code=status_code or 502)
+        return ProviderErrorException(
+            self.provider_id, err_msg, status_code=status_code or 502
+        )
 
     async def generate_response(
         self,
         request: ChatRequest,
-        history: List[Dict[str, Any]],
-    ) -> Tuple[str, TokenUsage]:
+        history: list[dict[str, Any]],
+    ) -> tuple[str, TokenUsage]:
         """Generate a complete text response and token usage stats using Groq.
 
         Args:
@@ -128,12 +144,16 @@ class GroqProvider(BaseAIProvider):
         model_name = self.resolve_model(request)
         messages = self.prepare_messages(request, history)
 
-        async def _call_groq() -> Tuple[str, TokenUsage]:
+        async def _call_groq() -> tuple[str, TokenUsage]:
             try:
                 response = await client.chat.completions.create(
                     model=model_name,
                     messages=messages,
-                    temperature=request.temperature if request.temperature is not None else self.settings.ai.temperature,
+                    temperature=(
+                        request.temperature
+                        if request.temperature is not None
+                        else self.settings.ai.temperature
+                    ),
                     max_tokens=request.max_tokens or self.settings.ai.max_output_tokens,
                 )
                 choices = getattr(response, "choices", [])
@@ -149,7 +169,7 @@ class GroqProvider(BaseAIProvider):
     async def generate_stream(
         self,
         request: ChatRequest,
-        history: List[Dict[str, Any]],
+        history: list[dict[str, Any]],
     ) -> AsyncGenerator[str, None]:
         """Stream generated token chunks using Groq streaming completions.
 
@@ -168,7 +188,11 @@ class GroqProvider(BaseAIProvider):
             stream = await client.chat.completions.create(
                 model=model_name,
                 messages=messages,
-                temperature=request.temperature if request.temperature is not None else self.settings.ai.temperature,
+                temperature=(
+                    request.temperature
+                    if request.temperature is not None
+                    else self.settings.ai.temperature
+                ),
                 max_tokens=request.max_tokens or self.settings.ai.max_output_tokens,
                 stream=True,
             )
@@ -181,7 +205,7 @@ class GroqProvider(BaseAIProvider):
         except Exception as exc:
             raise self._map_sdk_exception(exc, model_name)
 
-    async def check_health(self) -> Tuple[bool, Optional[float], str]:
+    async def check_health(self) -> tuple[bool, float | None, str]:
         """Perform a quick health ping test against Groq AI.
 
         Returns:
@@ -199,14 +223,16 @@ class GroqProvider(BaseAIProvider):
             return True, latency_ms, "Healthy"
         except Exception as exc:
             err_mapped = self._map_sdk_exception(exc, self.default_model)
-            return False, None, f"Groq health check failed: {str(err_mapped)}"
+            return False, None, f"Groq health check failed: {err_mapped!s}"
 
     async def startup(self) -> None:
         """Initialize client lazily during startup."""
         try:
             self._get_client()
         except Exception as exc:
-            self.logger.warning("Groq startup client init deferred", extra={"error": str(exc)})
+            self.logger.warning(
+                "Groq startup client init deferred", extra={"error": str(exc)}
+            )
 
     async def shutdown(self) -> None:
         """Clean up provider resources during shutdown."""

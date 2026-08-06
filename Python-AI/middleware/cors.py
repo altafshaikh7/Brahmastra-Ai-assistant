@@ -1,5 +1,3 @@
-
-
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import get_settings
@@ -26,5 +24,6 @@ class cors_middleware(CORSMiddleware):
             expose_headers=cors_cfg.expose_headers,
             max_age=cors_cfg.max_age,
         )
+
 
 __all__ = ["cors_middleware"]

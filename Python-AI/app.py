@@ -24,19 +24,19 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from core.config import get_settings
+from core.exception_handler import register_exception_handlers
 from core.lifespan import lifespan
 from middleware.cors import cors_middleware
 from middleware.logging import logging_middleware
+from middleware.rate_limit import rate_limit_middleware
 from middleware.request_id import request_id_middleware
 from middleware.timing import timing_middleware
-from middleware.rate_limit import rate_limit_middleware
-from core.exception_handler import register_exception_handlers
+from routers.automation import router as automation_router
 
 # Routers -------------------------------------------------------------
 from routers.health import router as health_router
 from routers.status import router as status_router
 from routers.tools import router as tools_router
-from routers.automation import router as automation_router
 
 
 def create_app() -> FastAPI:
@@ -63,11 +63,11 @@ def create_app() -> FastAPI:
     # -----------------------------------------------------------------
     # Middleware registration (order matters for request/response flow)
     # -----------------------------------------------------------------
-    app.add_middleware(cors_middleware)          # CORS handling
-    app.add_middleware(request_id_middleware)    # Request‑ID propagation
-    app.add_middleware(timing_middleware)        # Request timing metrics
-    app.add_middleware(rate_limit_middleware)    # Simple rate limiting
-    app.add_middleware(logging_middleware)       # Structured logging
+    app.add_middleware(cors_middleware)  # CORS handling
+    app.add_middleware(request_id_middleware)  # Request‑ID propagation
+    app.add_middleware(timing_middleware)  # Request timing metrics
+    app.add_middleware(rate_limit_middleware)  # Simple rate limiting
+    app.add_middleware(logging_middleware)  # Structured logging
 
     # -----------------------------------------------------------------
     # Exception handling

@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import threading
-from typing import Dict, List, Optional, Type
+from typing import ClassVar
 
 from core.config import Settings, get_settings
 from services.ai.base import BaseAIProvider
@@ -24,12 +24,12 @@ logger = get_logger(__name__)
 class AIProviderFactory:
     """Thread-safe and async-safe factory for AI Provider singletons."""
 
-    _instances: Dict[str, BaseAIProvider] = {}
+    _instances: ClassVar[dict[str, BaseAIProvider]] = {}
     _lock: threading.Lock = threading.Lock()
-    _async_lock: Optional[asyncio.Lock] = None
+    _async_lock: asyncio.Lock | None = None
 
-    _registered_classes: Dict[str, Type[BaseAIProvider]] = {}
-    _provider_map: Dict[str, str] = {
+    _registered_classes: ClassVar[dict[str, type[BaseAIProvider]]] = {}
+    _provider_map: ClassVar[dict[str, str]] = {
         "gemini": "services.ai.providers.gemini.GeminiProvider",
         "groq": "services.ai.providers.groq.GroqProvider",
         "openai": "services.ai.providers.openai.OpenAIProvider",
@@ -45,7 +45,7 @@ class AIProviderFactory:
         return cls._async_lock
 
     @classmethod
-    def _get_provider_class(cls, target: str) -> Type[BaseAIProvider]:
+    def _get_provider_class(cls, target: str) -> type[BaseAIProvider]:
         """Dynamically load and cache provider strategy class.
 
         Args:
@@ -81,8 +81,8 @@ class AIProviderFactory:
     @classmethod
     def get_provider(
         cls,
-        provider_id: Optional[str] = None,
-        settings: Optional[Settings] = None,
+        provider_id: str | None = None,
+        settings: Settings | None = None,
     ) -> BaseAIProvider:
         """Get or initialize singleton instance of requested AI provider.
 
@@ -103,7 +103,9 @@ class AIProviderFactory:
             with cls._lock:
                 if target not in cls._instances:
                     provider_cls = cls._get_provider_class(target)
-                    logger.info("Instantiating provider singleton", extra={"provider": target})
+                    logger.info(
+                        "Instantiating provider singleton", extra={"provider": target}
+                    )
                     cls._instances[target] = provider_cls(cfg)
 
         return cls._instances[target]
@@ -111,8 +113,8 @@ class AIProviderFactory:
     @classmethod
     async def get_provider_async(
         cls,
-        provider_id: Optional[str] = None,
-        settings: Optional[Settings] = None,
+        provider_id: str | None = None,
+        settings: Settings | None = None,
     ) -> BaseAIProvider:
         """Async-safe accessor for provider singleton."""
         async_lock = cls._get_async_lock()
@@ -123,7 +125,7 @@ class AIProviderFactory:
     def register_provider(
         cls,
         provider_id: str,
-        provider_cls: Type[BaseAIProvider],
+        provider_cls: type[BaseAIProvider],
     ) -> None:
         """Register a new provider strategy dynamically."""
         with cls._lock:
@@ -132,12 +134,12 @@ class AIProviderFactory:
             logger.info("Registered provider class", extra={"provider": slug})
 
     @classmethod
-    def list_supported_providers(cls) -> List[str]:
+    def list_supported_providers(cls) -> list[str]:
         """Return list of supported provider slugs."""
         return list(cls._provider_map.keys())
 
     @classmethod
-    def get_all_instantiated(cls) -> Dict[str, BaseAIProvider]:
+    def get_all_instantiated(cls) -> dict[str, BaseAIProvider]:
         """Return dict of currently cached provider singletons."""
         with cls._lock:
             return dict(cls._instances)

@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional, Type
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from core.config import Settings, get_settings
 from schemas.chat import (
@@ -36,8 +37,8 @@ class AIService:
 
     def __init__(
         self,
-        settings: Optional[Settings] = None,
-        factory: Optional[Type[AIProviderFactory]] = None,
+        settings: Settings | None = None,
+        factory: type[AIProviderFactory] | None = None,
     ) -> None:
         """Initialize AIService with application settings and provider factory.
 
@@ -46,7 +47,7 @@ class AIService:
             factory: AIProviderFactory class reference or None to use default.
         """
         self.settings: Settings = settings or get_settings()
-        self.factory: Type[AIProviderFactory] = factory or AIProviderFactory
+        self.factory: type[AIProviderFactory] = factory or AIProviderFactory
 
     async def startup(self) -> None:
         """Initialize resources and preload default provider during startup."""
@@ -70,7 +71,7 @@ class AIService:
         await self.factory.shutdown_all()
         logger.info("AIService shutdown complete")
 
-    def _resolve_provider(self, provider_override: Optional[str] = None) -> BaseAIProvider:
+    def _resolve_provider(self, provider_override: str | None = None) -> BaseAIProvider:
         """Resolve target provider strategy instance.
 
         Args:
@@ -85,8 +86,8 @@ class AIService:
     async def generate_response(
         self,
         request: ChatRequest,
-        conversation_history: Optional[List[Dict[str, Any]]] = None,
-        provider_override: Optional[str] = None,
+        conversation_history: list[dict[str, Any]] | None = None,
+        provider_override: str | None = None,
     ) -> ChatResponse:
         """Generate a complete AI response and return standardized ChatResponse payload.
 
@@ -128,8 +129,8 @@ class AIService:
     async def generate_stream(
         self,
         request: ChatRequest,
-        conversation_history: Optional[List[Dict[str, Any]]] = None,
-        provider_override: Optional[str] = None,
+        conversation_history: list[dict[str, Any]] | None = None,
+        provider_override: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream generated AI token chunks as an async generator.
 
@@ -159,7 +160,7 @@ class AIService:
 
     async def check_provider_health(
         self,
-        provider_id: Optional[str] = None,
+        provider_id: str | None = None,
     ) -> AIHealthResponse:
         """Check health status and latency of a single AI provider.
 
@@ -171,7 +172,9 @@ class AIService:
         """
         target_slug = provider_id or self.settings.ai.provider
         try:
-            provider = self.factory.get_provider(provider_id=target_slug, settings=self.settings)
+            provider = self.factory.get_provider(
+                provider_id=target_slug, settings=self.settings
+            )
             is_healthy, latency_ms, message = await provider.check_health()
             status = "ok" if is_healthy else "degraded"
             model_name = provider.default_model
@@ -200,7 +203,7 @@ class AIService:
                 details={"error": str(exc)},
             )
 
-    async def check_all_providers(self) -> Dict[str, AIHealthResponse]:
+    async def check_all_providers(self) -> dict[str, AIHealthResponse]:
         """Run health diagnostic checks across all registered providers concurrently.
 
         Returns:
@@ -219,11 +222,13 @@ class AIService:
             ProvidersResponse containing active provider slug and list of ProviderInfo models.
         """
         active_slug = self.settings.ai.provider
-        provider_infos: List[ProviderInfo] = []
+        provider_infos: list[ProviderInfo] = []
 
         for slug in self.factory.list_supported_providers():
             try:
-                provider = self.factory.get_provider(provider_id=slug, settings=self.settings)
+                provider = self.factory.get_provider(
+                    provider_id=slug, settings=self.settings
+                )
                 provider_infos.append(
                     ProviderInfo(
                         id=provider.provider_id,
@@ -245,10 +250,10 @@ class AIService:
         )
 
 
-_service_instance: Optional[AIService] = None
+_service_instance: AIService | None = None
 
 
-def get_ai_service(settings: Optional[Settings] = None) -> AIService:
+def get_ai_service(settings: Settings | None = None) -> AIService:
     """Return singleton instance of AIService.
 
     Args:

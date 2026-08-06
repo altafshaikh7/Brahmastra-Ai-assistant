@@ -10,14 +10,14 @@ from __future__ import annotations
 import abc
 import asyncio
 import time
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Tuple, TypeVar
+from collections.abc import AsyncGenerator, Callable
+from typing import Any, TypeVar
 
 import httpx
 
 from core.config import Settings
 from schemas.chat import ChatRequest, TokenUsage
 from services.ai.exceptions import (
-    AIServiceException,
     APIKeyMissingException,
     InvalidModelException,
     NetworkErrorException,
@@ -48,14 +48,14 @@ class BaseAIProvider(abc.ABC):
         self.provider_id: str = "base"
         self.display_name: str = "Base Provider"
         self.default_model: str = ""
-        self.supported_models: List[str] = []
-        self._http_client: Optional[httpx.AsyncClient] = None
+        self.supported_models: list[str] = []
+        self._http_client: httpx.AsyncClient | None = None
 
     def prepare_messages(
         self,
         request: ChatRequest,
-        history: List[Dict[str, Any]],
-    ) -> List[Dict[str, str]]:
+        history: list[dict[str, Any]],
+    ) -> list[dict[str, str]]:
         """Format input prompt and history into OpenAI-compatible message list.
 
         Args:
@@ -65,7 +65,7 @@ class BaseAIProvider(abc.ABC):
         Returns:
             List of structured message dictionaries containing role and content.
         """
-        messages: List[Dict[str, str]] = []
+        messages: list[dict[str, str]] = []
 
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})
@@ -81,7 +81,7 @@ class BaseAIProvider(abc.ABC):
     def prepare_prompt(
         self,
         request: ChatRequest,
-        history: List[Dict[str, Any]],
+        history: list[dict[str, Any]],
     ) -> str:
         """Format input prompt and history into a single concatenated string prompt.
 
@@ -92,7 +92,7 @@ class BaseAIProvider(abc.ABC):
         Returns:
             Formatted multi-turn prompt string.
         """
-        prompt_parts: List[str] = []
+        prompt_parts: list[str] = []
 
         if request.system_prompt:
             prompt_parts.append(f"System: {request.system_prompt}\n")
@@ -118,7 +118,11 @@ class BaseAIProvider(abc.ABC):
             Resolved model identifier string.
         """
         requested_model = getattr(request, "model", None)
-        if requested_model and isinstance(requested_model, str) and requested_model.strip():
+        if (
+            requested_model
+            and isinstance(requested_model, str)
+            and requested_model.strip()
+        ):
             model = requested_model.strip()
         elif self.default_model and self.default_model.strip():
             model = self.default_model.strip()
@@ -129,7 +133,7 @@ class BaseAIProvider(abc.ABC):
 
     def extract_token_usage(
         self,
-        usage_metadata: Optional[Any] = None,
+        usage_metadata: Any | None = None,
         prompt_text: str = "",
         response_text: str = "",
     ) -> TokenUsage:
@@ -145,20 +149,30 @@ class BaseAIProvider(abc.ABC):
         """
         if usage_metadata is not None:
             if isinstance(usage_metadata, dict):
-                p_tokens = usage_metadata.get("prompt_tokens") or usage_metadata.get("prompt_token_count")
-                c_tokens = usage_metadata.get("completion_tokens") or usage_metadata.get("candidates_token_count")
-                t_tokens = usage_metadata.get("total_tokens") or usage_metadata.get("total_token_count")
+                p_tokens = usage_metadata.get("prompt_tokens") or usage_metadata.get(
+                    "prompt_token_count"
+                )
+                c_tokens = usage_metadata.get(
+                    "completion_tokens"
+                ) or usage_metadata.get("candidates_token_count")
+                t_tokens = usage_metadata.get("total_tokens") or usage_metadata.get(
+                    "total_token_count"
+                )
 
                 if p_tokens is not None and c_tokens is not None:
                     return TokenUsage(
                         prompt_tokens=int(p_tokens),
                         completion_tokens=int(c_tokens),
-                        total_tokens=int(t_tokens if t_tokens is not None else p_tokens + c_tokens),
+                        total_tokens=int(
+                            t_tokens if t_tokens is not None else p_tokens + c_tokens
+                        ),
                     )
             elif hasattr(usage_metadata, "prompt_token_count"):
                 p_tokens = getattr(usage_metadata, "prompt_token_count", 0) or 0
                 c_tokens = getattr(usage_metadata, "candidates_token_count", 0) or 0
-                t_tokens = getattr(usage_metadata, "total_token_count", 0) or (p_tokens + c_tokens)
+                t_tokens = getattr(usage_metadata, "total_token_count", 0) or (
+                    p_tokens + c_tokens
+                )
                 return TokenUsage(
                     prompt_tokens=int(p_tokens),
                     completion_tokens=int(c_tokens),
@@ -167,7 +181,9 @@ class BaseAIProvider(abc.ABC):
             elif hasattr(usage_metadata, "prompt_tokens"):
                 p_tokens = getattr(usage_metadata, "prompt_tokens", 0) or 0
                 c_tokens = getattr(usage_metadata, "completion_tokens", 0) or 0
-                t_tokens = getattr(usage_metadata, "total_tokens", 0) or (p_tokens + c_tokens)
+                t_tokens = getattr(usage_metadata, "total_tokens", 0) or (
+                    p_tokens + c_tokens
+                )
                 return TokenUsage(
                     prompt_tokens=int(p_tokens),
                     completion_tokens=int(c_tokens),
@@ -185,8 +201,8 @@ class BaseAIProvider(abc.ABC):
 
     def create_http_client(
         self,
-        base_url: Optional[str] = None,
-        headers: Optional[Dict[str, str]] = None,
+        base_url: str | None = None,
+        headers: dict[str, str] | None = None,
     ) -> httpx.AsyncClient:
         """Create or return existing singleton HTTPX AsyncClient.
 
@@ -215,11 +231,12 @@ class BaseAIProvider(abc.ABC):
         if self._http_client is not None and not self._http_client.is_closed:
             await self._http_client.aclose()
             self._http_client = None
-            self.logger.info("Closed HTTP client connection", extra={"provider": self.provider_id})
+            self.logger.info(
+                "Closed HTTP client connection", extra={"provider": self.provider_id}
+            )
 
     async def startup(self) -> None:
         """Initialize provider resources during application startup."""
-        pass
 
     async def shutdown(self) -> None:
         """Clean up provider resources during application shutdown."""
@@ -286,13 +303,13 @@ class BaseAIProvider(abc.ABC):
                             "error": str(exc),
                         },
                     )
-                    raise exc
+                    raise
             except (APIKeyMissingException, InvalidModelException) as exc:
                 self.logger.error(
                     "Non-retryable client error",
                     extra={"provider": self.provider_id, "error": str(exc)},
                 )
-                raise exc
+                raise
             except Exception as exc:
                 self.logger.error(
                     "Unexpected provider execution error",
@@ -304,8 +321,8 @@ class BaseAIProvider(abc.ABC):
     async def generate_response(
         self,
         request: ChatRequest,
-        history: List[Dict[str, Any]],
-    ) -> Tuple[str, TokenUsage]:
+        history: list[dict[str, Any]],
+    ) -> tuple[str, TokenUsage]:
         """Generate a complete text response and token usage stats.
 
         Args:
@@ -315,13 +332,12 @@ class BaseAIProvider(abc.ABC):
         Returns:
             Tuple of (generated_response_text, token_usage_instance).
         """
-        pass
 
     @abc.abstractmethod
     async def generate_stream(
         self,
         request: ChatRequest,
-        history: List[Dict[str, Any]],
+        history: list[dict[str, Any]],
     ) -> AsyncGenerator[str, None]:
         """Generate a streaming token response as an async generator.
 
@@ -332,13 +348,11 @@ class BaseAIProvider(abc.ABC):
         Yields:
             Text content chunks as they are received from the AI provider.
         """
-        pass
 
     @abc.abstractmethod
-    async def check_health(self) -> Tuple[bool, Optional[float], str]:
+    async def check_health(self) -> tuple[bool, float | None, str]:
         """Perform a health diagnostic check on the provider connection.
 
         Returns:
             Tuple of (is_healthy, latency_in_ms, status_message).
         """
-        pass

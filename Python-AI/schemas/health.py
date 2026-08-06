@@ -8,12 +8,11 @@ Kubernetes probes as well as custom monitoring dashboards.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
-
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -46,22 +45,22 @@ class ComponentHealth(BaseModel):
         description="Current health status of the component.",
         examples=[HealthStatus.healthy],
     )
-    message: Optional[str] = Field(
+    message: str | None = Field(
         None,
         description="Human‑readable message providing additional detail.",
         examples=["Connection pool is stable"],
     )
-    response_time_ms: Optional[float] = Field(
+    response_time_ms: float | None = Field(
         None,
         ge=0.0,
         description="Response time of the health check in milliseconds.",
     )
-    version: Optional[str] = Field(
+    version: str | None = Field(
         None,
         description="Version of the component (e.g., database server version).",
         examples=["14.3"],
     )
-    metadata: Dict[str, Any] = Field(
+    metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Arbitrary additional data relevant to the component.",
     )
@@ -93,7 +92,7 @@ class SystemHealth(BaseModel):
         description="Memory usage percentage (0–100).",
         examples=[62.1],
     )
-    disk_percent: Optional[float] = Field(
+    disk_percent: float | None = Field(
         None,
         ge=0.0,
         le=100.0,
@@ -122,23 +121,23 @@ class DependencyHealth(BaseModel):
     apply in the current deployment, its value may be ``None``.
     """
 
-    database: Optional[ComponentHealth] = Field(
+    database: ComponentHealth | None = Field(
         None,
         description="Health of the primary database.",
     )
-    storage: Optional[ComponentHealth] = Field(
+    storage: ComponentHealth | None = Field(
         None,
         description="Health of the persistent storage layer.",
     )
-    registry: Optional[ComponentHealth] = Field(
+    registry: ComponentHealth | None = Field(
         None,
         description="Health of the tool/plugin registry.",
     )
-    ai_engine: Optional[ComponentHealth] = Field(
+    ai_engine: ComponentHealth | None = Field(
         None,
         description="Health of the AI inference engine (if deployed).",
     )
-    automation: Optional[ComponentHealth] = Field(
+    automation: ComponentHealth | None = Field(
         None,
         description="Health of the automation service.",
     )
@@ -176,10 +175,10 @@ class HealthCheckResponse(BaseModel):
         examples=["production"],
     )
     timestamp: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(UTC),
         description="UTC timestamp when the health check was performed.",
     )
-    request_id: Optional[str] = Field(
+    request_id: str | None = Field(
         None,
         description="Echo of the X-Request-ID header, if present.",
     )
@@ -191,7 +190,7 @@ class HealthCheckResponse(BaseModel):
         ...,
         description="Status of critical external dependencies.",
     )
-    components: List[ComponentHealth] = Field(
+    components: list[ComponentHealth] = Field(
         default_factory=list,
         description="Detailed health status of all internal application components.",
     )
@@ -220,7 +219,7 @@ class ReadinessResponse(BaseModel):
         description="True when the application has completed startup and can serve requests.",
         examples=[True],
     )
-    message: Optional[str] = Field(
+    message: str | None = Field(
         None,
         description="Human‑readable description of the readiness state.",
     )

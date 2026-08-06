@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import hmac
 import secrets
-from datetime import datetime, timedelta, timezone
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from functools import wraps
-from typing import Annotated, Any, Callable, Iterable, Mapping, Optional, Sequence
+from typing import Annotated, Any
 
 import jwt
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from passlib.context import CryptContext
 
@@ -67,7 +68,9 @@ ROLE_HIERARCHY: dict[Role, set[Role]] = {
     Role.GUEST: set(),
 }
 
-_PWD_CONTEXT = CryptContext(schemes=["bcrypt", "argon2", "pbkdf2_sha256"], deprecated="auto")
+_PWD_CONTEXT = CryptContext(
+    schemes=["bcrypt", "argon2", "pbkdf2_sha256"], deprecated="auto"
+)
 _OAUTH2_SCHEME = OAuth2PasswordBearer(tokenUrl="/auth/token")
 
 
@@ -91,14 +94,14 @@ def _get_default_audience() -> str:
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _normalize_datetime(value: Any) -> datetime:
     if isinstance(value, datetime):
-        return value.astimezone(timezone.utc)
+        return value.astimezone(UTC)
     if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(int(value), tz=timezone.utc)
+        return datetime.fromtimestamp(int(value), tz=UTC)
     raise TokenError("Token timestamp claim is invalid")
 
 
@@ -145,7 +148,9 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         raise ValueError("Password cannot be empty")
     if not hashed_password:
         raise ValueError("Hashed password cannot be empty")
-    verified, updated_hash = _PWD_CONTEXT.verify_and_update(plain_password, hashed_password)
+    verified, updated_hash = _PWD_CONTEXT.verify_and_update(
+        plain_password, hashed_password
+    )
     if verified and updated_hash:
         logger.debug("Password hash upgraded", extra={"event": "password_rehash"})
     return verified
@@ -154,10 +159,10 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def create_access_token(
     subject: str,
     *,
-    expires_delta: Optional[timedelta] = None,
-    extra_claims: Optional[Mapping[str, Any]] = None,
-    audience: Optional[str] = None,
-    issuer: Optional[str] = None,
+    expires_delta: timedelta | None = None,
+    extra_claims: Mapping[str, Any] | None = None,
+    audience: str | None = None,
+    issuer: str | None = None,
 ) -> str:
     """Create a signed JWT access token with standard and custom claims."""
     if not subject:
@@ -183,10 +188,10 @@ def create_access_token(
 def create_refresh_token(
     subject: str,
     *,
-    expires_delta: Optional[timedelta] = None,
-    extra_claims: Optional[Mapping[str, Any]] = None,
-    audience: Optional[str] = None,
-    issuer: Optional[str] = None,
+    expires_delta: timedelta | None = None,
+    extra_claims: Mapping[str, Any] | None = None,
+    audience: str | None = None,
+    issuer: str | None = None,
 ) -> str:
     """Create a signed JWT refresh token with standard and custom claims."""
     if not subject:
@@ -212,9 +217,9 @@ def create_refresh_token(
 def decode_token(
     token: str,
     *,
-    expected_type: Optional[str] = None,
-    audience: Optional[str] = None,
-    issuer: Optional[str] = None,
+    expected_type: str | None = None,
+    audience: str | None = None,
+    issuer: str | None = None,
 ) -> dict[str, Any]:
     """Decode and validate a JWT token, raising security-specific errors."""
     if not token or not str(token).strip():
@@ -229,7 +234,9 @@ def decode_token(
             algorithms=[settings.jwt.algorithm],
             audience=audience or _get_default_audience(),
             issuer=issuer or _get_default_issuer(),
-            options={"require": ["sub", "exp", "iat", "nbf", "iss", "aud", "jti", "type"]},
+            options={
+                "require": ["sub", "exp", "iat", "nbf", "iss", "aud", "jti", "type"]
+            },
         )
     except jwt.ExpiredSignatureError as exc:
         raise TokenError("Token has expired") from exc
@@ -290,12 +297,14 @@ def decode_token(
 def validate_token(
     token: str,
     *,
-    expected_type: Optional[str] = None,
-    audience: Optional[str] = None,
-    issuer: Optional[str] = None,
+    expected_type: str | None = None,
+    audience: str | None = None,
+    issuer: str | None = None,
 ) -> dict[str, Any]:
     """Validate a JWT token and return its payload."""
-    return decode_token(token, expected_type=expected_type, audience=audience, issuer=issuer)
+    return decode_token(
+        token, expected_type=expected_type, audience=audience, issuer=issuer
+    )
 
 
 def get_token_subject(token: str) -> str:
@@ -360,7 +369,9 @@ def has_role(user: Any, required_role: Role | str) -> bool:
     if isinstance(user, (str, Role)):
         roles = _coerce_roles(user)
     else:
-        roles = _coerce_roles(getattr(user, "roles", None) or getattr(user, "role", None))
+        roles = _coerce_roles(
+            getattr(user, "roles", None) or getattr(user, "role", None)
+        )
     required = Role(str(required_role).lower())
     if required in roles:
         return True
@@ -389,7 +400,9 @@ def has_permission(user: Any, required_permission: Permission | str) -> bool:
     return required in permissions
 
 
-def has_any_permission(user: Any, required_permissions: Sequence[Permission | str] | None) -> bool:
+def has_any_permission(
+    user: Any, required_permissions: Sequence[Permission | str] | None
+) -> bool:
     """Return whether the user has any of the required permissions."""
     if not required_permissions:
         return False
@@ -432,7 +445,9 @@ def require_permissions(*required_permissions: Permission | str):
     return decorator
 
 
-async def get_current_user(token: Annotated[str, Depends(_OAUTH2_SCHEME)]) -> dict[str, Any]:
+async def get_current_user(
+    token: Annotated[str, Depends(_OAUTH2_SCHEME)],
+) -> dict[str, Any]:
     """FastAPI dependency returning the validated JWT claims for the current user."""
     try:
         return decode_token(token)
@@ -458,7 +473,9 @@ async def get_current_active_user(
 ) -> dict[str, Any]:
     """FastAPI dependency enforcing an active account state."""
     if current_user.get("is_active") is False:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inactive account")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Inactive account"
+        )
     return current_user
 
 
@@ -487,11 +504,11 @@ __all__ = [
     "extract_api_key",
     "extract_bearer_token",
     "generate_secure_token",
-    "hash_password",
     "has_any_permission",
     "has_any_role",
     "has_permission",
     "has_role",
+    "hash_password",
     "require_permissions",
     "require_roles",
     "validate_api_key",

@@ -12,7 +12,7 @@ from __future__ import annotations
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Final, Literal, Optional, TypeAlias
+from typing import Any, Final, Literal, TypeAlias
 
 from pydantic import (
     BaseModel,
@@ -79,11 +79,18 @@ def _validate_secret_strength(value: SecretStr, min_length: int = 32) -> SecretS
     return value
 
 
-def _validate_optional_secret(value: Optional[SecretStr], min_length: int = 32) -> Optional[SecretStr]:
+def _validate_optional_secret(
+    value: SecretStr | None, min_length: int = 32
+) -> SecretStr | None:
     """Validate an optional SecretStr if present."""
-    if value is not None and value.get_secret_value():
-        if len(value.get_secret_value()) < min_length:
-            raise ValueError(f"optional secret must be at least {min_length} characters long")
+    if (
+        value is not None
+        and value.get_secret_value()
+        and len(value.get_secret_value()) < min_length
+    ):
+        raise ValueError(
+            f"optional secret must be at least {min_length} characters long"
+        )
     return value
 
 
@@ -148,7 +155,13 @@ class ApplicationSettings(BaseModel):
     root_path: str = Field(default="")
     trusted_hosts: list[str] = Field(default_factory=lambda: ["*"])
     excluded_logging_prefixes: list[str] = Field(
-        default_factory=lambda: ["/health", "/metrics", "/docs", "/redoc", "/openapi.json"]
+        default_factory=lambda: [
+            "/health",
+            "/metrics",
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+        ]
     )
     request_id_header: str = Field(default="X-Request-ID")
     docs_enabled: bool = Field(default=True)
@@ -163,10 +176,19 @@ class ApplicationSettings(BaseModel):
                 raise ValueError("debug must be False in production environment")
             if self.reload:
                 raise ValueError("reload must be False in production environment")
-            if self.docs_enabled or self.swagger_enabled or self.redoc_enabled or self.openapi_enabled:
-                raise ValueError("docs, swagger, redoc, and openapi must be disabled in production")
+            if (
+                self.docs_enabled
+                or self.swagger_enabled
+                or self.redoc_enabled
+                or self.openapi_enabled
+            ):
+                raise ValueError(
+                    "docs, swagger, redoc, and openapi must be disabled in production"
+                )
             if not self.trusted_hosts or self.trusted_hosts == ["*"]:
-                raise ValueError("trusted_hosts must be explicitly set in production (not ['*'])")
+                raise ValueError(
+                    "trusted_hosts must be explicitly set in production (not ['*'])"
+                )
         return self
 
     @field_validator("trusted_hosts", mode="before")
@@ -272,7 +294,7 @@ class RedisSettings(BaseModel):
     enabled: bool = Field(default=False)
     host: str = Field(default="localhost")
     port: int = Field(default=6379, ge=1, le=65535)
-    password: Optional[SecretStr] = Field(default=None)
+    password: SecretStr | None = Field(default=None)
     database: int = Field(default=0, ge=0)
     ssl: bool = Field(default=False)
     connect_timeout_seconds: float = Field(default=5.0, ge=0.1)
@@ -305,8 +327,8 @@ class SecuritySettings(BaseModel):
     password_salt_rounds: int = Field(default=12, ge=4, le=31)
     token_blacklist_enabled: bool = Field(default=True)
     rbac_enabled: bool = Field(default=True)
-    csrf_secret: Optional[SecretStr] = Field(default=None)
-    api_secret: Optional[SecretStr] = Field(default=None)
+    csrf_secret: SecretStr | None = Field(default=None)
+    api_secret: SecretStr | None = Field(default=None)
 
     @field_validator("secret_key")
     @classmethod
@@ -315,7 +337,7 @@ class SecuritySettings(BaseModel):
 
     @field_validator("api_secret", "csrf_secret")
     @classmethod
-    def _validate_optional_secret(cls, value: Optional[SecretStr]) -> Optional[SecretStr]:
+    def _validate_optional_secret(cls, value: SecretStr | None) -> SecretStr | None:
         return _validate_optional_secret(value, min_length=32)
 
 
@@ -334,8 +356,8 @@ class JWTSettings(BaseModel):
     access_token_expire_minutes: int = Field(default=30, ge=1)
     refresh_token_expire_days: int = Field(default=7, ge=1)
     token_prefix: str = Field(default="Bearer")
-    issuer: Optional[str] = Field(default=None)
-    audience: Optional[str] = Field(default=None)
+    issuer: str | None = Field(default=None)
+    audience: str | None = Field(default=None)
     clock_skew_seconds: int = Field(default=30, ge=0)
 
     @field_validator("secret_key")
@@ -383,19 +405,19 @@ class AISettings(BaseModel):
 
     # New fields
     provider: ProviderType = Field(default="gemini")
-    api_key: Optional[SecretStr] = Field(default=None)
-    base_url: Optional[HttpUrl] = Field(default=None)
+    api_key: SecretStr | None = Field(default=None)
+    base_url: HttpUrl | None = Field(default=None)
     timeout_seconds: int = Field(default=60, ge=1)
     retry_attempts: int = Field(default=3, ge=0)
     retry_backoff_seconds: float = Field(default=0.25, ge=0.0)
 
     # Provider-specific configurations
-    azure_endpoint: Optional[HttpUrl] = Field(default=None)
-    azure_deployment: Optional[str] = Field(default=None)
-    azure_api_version: Optional[str] = Field(default=None)
-    anthropic_version: Optional[str] = Field(default="2023-06-01")
+    azure_endpoint: HttpUrl | None = Field(default=None)
+    azure_deployment: str | None = Field(default=None)
+    azure_api_version: str | None = Field(default=None)
+    anthropic_version: str | None = Field(default="2023-06-01")
     gemini_model: str = Field(default="gemini-1.5-pro")
-    openrouter_model: Optional[str] = Field(default=None)
+    openrouter_model: str | None = Field(default=None)
 
     @field_validator("base_url", mode="before")
     @classmethod
@@ -410,7 +432,9 @@ class AISettings(BaseModel):
                 raise ValueError("api_key is required for OpenAI provider")
         elif self.provider == "azure_openai":
             if not self.azure_endpoint or not self.azure_deployment:
-                raise ValueError("azure_endpoint and azure_deployment are required for Azure OpenAI")
+                raise ValueError(
+                    "azure_endpoint and azure_deployment are required for Azure OpenAI"
+                )
             if self.api_key is None or not self.api_key.get_secret_value():
                 raise ValueError("api_key is required for Azure OpenAI")
             if not self.azure_api_version:
@@ -546,7 +570,9 @@ class CORSSettings(BaseModel):
 
     @model_validator(mode="after")
     def _validate_credentials_wildcard(self) -> CORSSettings:
-        if self.allow_credentials and any(origin == "*" for origin in self.allow_origins):
+        if self.allow_credentials and any(
+            origin == "*" for origin in self.allow_origins
+        ):
             raise ValueError(
                 "allow_credentials cannot be True when allow_origins includes '*'"
             )
@@ -573,7 +599,7 @@ class ObservabilitySettings(BaseModel):
     environment: Environment = Field(default=Environment.DEVELOPMENT)
 
     opentelemetry_enabled: bool = Field(default=False)
-    otlp_endpoint: Optional[HttpUrl] = Field(default=None)
+    otlp_endpoint: HttpUrl | None = Field(default=None)
     otlp_headers: dict[str, str] = Field(default_factory=dict)
     resource_attributes: dict[str, str] = Field(default_factory=dict)
     trace_sampling_ratio: float = Field(default=0.1, ge=0.0, le=1.0)
@@ -587,13 +613,13 @@ class ObservabilitySettings(BaseModel):
 
     grafana_enabled: bool = Field(default=False)
     loki_enabled: bool = Field(default=False)
-    loki_endpoint: Optional[HttpUrl] = Field(default=None)
+    loki_endpoint: HttpUrl | None = Field(default=None)
 
     datadog_enabled: bool = Field(default=False)
-    datadog_api_key: Optional[SecretStr] = Field(default=None)
+    datadog_api_key: SecretStr | None = Field(default=None)
 
     sentry_enabled: bool = Field(default=False)
-    sentry_dsn: Optional[HttpUrl] = Field(default=None)
+    sentry_dsn: HttpUrl | None = Field(default=None)
 
     @model_validator(mode="after")
     def _validate_otlp(self) -> ObservabilitySettings:
@@ -710,24 +736,32 @@ class Settings(BaseSettings):
                 )
             # JWT.secret_key is required
             if not self.jwt.secret_key.get_secret_value():
-                raise ValueError(
-                    "jwt.secret_key must be set in production environment"
-                )
+                raise ValueError("jwt.secret_key must be set in production environment")
             # AI: enforce provider-specific requirements again in production
-            if self.ai.provider == "openai" and (self.ai.api_key is None or not self.ai.api_key.get_secret_value()):
+            if self.ai.provider == "openai" and (
+                self.ai.api_key is None or not self.ai.api_key.get_secret_value()
+            ):
                 raise ValueError(
                     "ai.api_key is required when using OpenAI provider in production"
                 )
-            if self.ai.provider == "azure_openai" and (self.ai.api_key is None or not self.ai.api_key.get_secret_value()):
+            if self.ai.provider == "azure_openai" and (
+                self.ai.api_key is None or not self.ai.api_key.get_secret_value()
+            ):
                 raise ValueError(
                     "ai.api_key is required when using Azure OpenAI in production"
                 )
             # Redis: if enabled with SSL, password is required
-            if self.redis.enabled and self.redis.ssl:
-                if self.redis.password is None or not self.redis.password.get_secret_value():
-                    raise ValueError(
-                        "redis.password is required when redis SSL is enabled in production"
-                    )
+            if (
+                self.redis.enabled
+                and self.redis.ssl
+                and (
+                    self.redis.password is None
+                    or not self.redis.password.get_secret_value()
+                )
+            ):
+                raise ValueError(
+                    "redis.password is required when redis SSL is enabled in production"
+                )
             # Observability: if sentry enabled, require DSN
             if self.observability.sentry_enabled and not self.observability.sentry_dsn:
                 raise ValueError(
@@ -752,8 +786,8 @@ def get_settings() -> Settings:
 # =============================================================================
 
 __all__ = [
-    "ApplicationSettings",
     "AISettings",
+    "ApplicationSettings",
     "CORSSettings",
     "EmailSettings",
     "Environment",

@@ -15,8 +15,8 @@ The models follow enterprise best practices:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Generic, List, Optional, TypeVar
+from datetime import UTC, datetime
+from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -35,12 +35,12 @@ T = TypeVar("T")
 class BaseResponse(BaseModel):
     """Common metadata included in every API response."""
 
-    request_id: Optional[str] = Field(
+    request_id: str | None = Field(
         None,
         description="Echo of the X-Request-ID header, if present.",
     )
     timestamp: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(UTC),
         description="UTC timestamp when the response was generated.",
     )
 
@@ -94,7 +94,7 @@ class ErrorResponse(BaseResponse):
         None,
         description="Detailed information about the error (Pydantic errors, str, etc.).",
     )
-    error_code: Optional[str] = Field(
+    error_code: str | None = Field(
         None,
         description="Machine‑readable error code for automated handling.",
     )
@@ -112,7 +112,7 @@ class ErrorResponse(BaseResponse):
 class PaginatedResponse(BaseResponse, Generic[T]):
     """Envelope for paginated collections."""
 
-    items: List[T] = Field(
+    items: list[T] = Field(
         ...,
         description="List of items for the current page.",
     )
@@ -184,7 +184,7 @@ class ToolResponse(BaseResponse):
         None,
         description="Stdout or primary result from the tool.",
     )
-    exit_code: Optional[int] = Field(
+    exit_code: int | None = Field(
         None,
         description="Process exit code (if applicable).",
     )
@@ -210,7 +210,7 @@ class AutomationResponse(BaseResponse):
         "accepted",
         description="Current status of the automation job.",
     )
-    result: Optional[Any] = Field(
+    result: Any | None = Field(
         None,
         description="Result payload once the job completes.",
     )

@@ -46,14 +46,12 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import (
-    Awaitable,
-    Callable,
     Final,
     Literal,
-    Optional,
+    TypeAlias,
     TypedDict,
-    TypeVar,
 )
 
 from fastapi import Request, Response
@@ -146,7 +144,7 @@ class _HeaderExtractor:
     and pure ASGI implementations.
     """
 
-    __slots__ = ("_request_id_header", "_correlation_id_header")
+    __slots__ = ("_correlation_id_header", "_request_id_header")
 
     def __init__(
         self,
@@ -162,9 +160,7 @@ class _HeaderExtractor:
         self._request_id_header = request_id_header
         self._correlation_id_header = correlation_id_header
 
-    def extract_request_id(
-        self, headers: dict[str, str] | dict[bytes, bytes]
-    ) -> str:
+    def extract_request_id(self, headers: dict[str, str] | dict[bytes, bytes]) -> str:
         """Extract Request ID from headers or generate new UUID4.
 
         Attempts to extract Request ID in the following order:
@@ -252,7 +248,7 @@ class _HeaderExtractor:
     @staticmethod
     def _get_header(
         headers: dict[str, str] | dict[bytes, bytes], name: str
-    ) -> Optional[str]:
+    ) -> str | None:
         """Safely extract header value with case-insensitive lookup.
 
         Handles both string and bytes headers (FastAPI vs ASGI).
@@ -270,7 +266,9 @@ class _HeaderExtractor:
         name_lower = name.lower()
 
         for key, value in headers.items():
-            key_str = key.decode("utf-8", errors="replace") if isinstance(key, bytes) else key
+            key_str = (
+                key.decode("utf-8", errors="replace") if isinstance(key, bytes) else key
+            )
             if key_str.lower() == name_lower:
                 if isinstance(value, bytes):
                     return value.decode("utf-8", errors="replace")
@@ -319,7 +317,12 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         >>> app.add_middleware(RequestContextMiddleware)
     """
 
-    __slots__ = ("_settings", "_request_id_header", "_correlation_id_header", "_header_extractor")
+    __slots__ = (
+        "_correlation_id_header",
+        "_header_extractor",
+        "_request_id_header",
+        "_settings",
+    )
 
     def __init__(self, app: ASGIApp) -> None:
         """Initialize middleware with application reference.
@@ -386,7 +389,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         # Log request initiation
         self._log_request_start(request, request_id, correlation_id)
 
-        response: Optional[Response] = None
+        response: Response | None = None
         try:
             # Invoke next middleware or route handler
             response = await call_next(request)
@@ -434,7 +437,9 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             correlation_id: Correlation ID for distributed tracing
         """
         headers_dict = dict(request.headers)
-        client_ip = self._header_extractor.extract_client_ip(headers_dict, request.client)
+        client_ip = self._header_extractor.extract_client_ip(
+            headers_dict, request.client
+        )
         user_agent = self._header_extractor.extract_user_agent(headers_dict)
 
         context: RequestContextData = {
@@ -471,7 +476,9 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             duration_ns: Request processing duration in nanoseconds
         """
         headers_dict = dict(request.headers)
-        client_ip = self._header_extractor.extract_client_ip(headers_dict, request.client)
+        client_ip = self._header_extractor.extract_client_ip(
+            headers_dict, request.client
+        )
         user_agent = self._header_extractor.extract_user_agent(headers_dict)
 
         status_code = response.status_code
@@ -480,7 +487,9 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
         # Determine log level and method based on status code
         if status_code >= HTTP_STATUS_SERVER_ERROR:
-            log_level: Literal["debug", "info", "warning", "error", "critical"] = "error"
+            log_level: Literal["debug", "info", "warning", "error", "critical"] = (
+                "error"
+            )
             log_method = logger.error
         elif status_code >= HTTP_STATUS_CLIENT_ERROR:
             log_level = "warning"
@@ -547,7 +556,6 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         logger.error(
             f"Request processing failed after {duration_seconds:.3f}s",
             extra=context,
-            exc_info=True,
         )
 
 
@@ -573,7 +581,13 @@ class RequestContextMiddlewareASGI:
         >>> app.add_middleware(RequestContextMiddlewareASGI)
     """
 
-    __slots__ = ("_app", "_settings", "_request_id_header", "_correlation_id_header", "_header_extractor")
+    __slots__ = (
+        "_app",
+        "_correlation_id_header",
+        "_header_extractor",
+        "_request_id_header",
+        "_settings",
+    )
 
     def __init__(self, app: ASGIApp) -> None:
         """Initialize middleware with application reference.
@@ -746,7 +760,9 @@ class RequestContextMiddlewareASGI:
 
         # Determine log level based on status code
         if status_code >= HTTP_STATUS_SERVER_ERROR:
-            log_level: Literal["debug", "info", "warning", "error", "critical"] = "error"
+            log_level: Literal["debug", "info", "warning", "error", "critical"] = (
+                "error"
+            )
             log_method = logger.error
         elif status_code >= HTTP_STATUS_CLIENT_ERROR:
             log_level = "warning"
@@ -777,13 +793,13 @@ class RequestContextMiddlewareASGI:
 
 
 __all__ = [
+    "CORRELATION_ID_HEADER",
+    "CORRELATION_ID_STATE",
+    "REQUEST_DURATION_STATE",
+    "REQUEST_ID_HEADER",
+    "REQUEST_ID_STATE",
+    "REQUEST_START_TIME_STATE",
+    "RequestContextData",
     "RequestContextMiddleware",
     "RequestContextMiddlewareASGI",
-    "REQUEST_ID_HEADER",
-    "CORRELATION_ID_HEADER",
-    "REQUEST_ID_STATE",
-    "CORRELATION_ID_STATE",
-    "REQUEST_START_TIME_STATE",
-    "REQUEST_DURATION_STATE",
-    "RequestContextData",
 ]

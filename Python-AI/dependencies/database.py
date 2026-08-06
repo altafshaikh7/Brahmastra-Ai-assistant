@@ -1,4 +1,4 @@
-﻿"""MongoDB dependency module for FastAPI.
+"""MongoDB dependency module for FastAPI.
 
 This module exposes singleton accessors for the shared Motor client and
 application database used by services and routers. The dependency layer is
@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from time import perf_counter
-from typing import Annotated, Final, Optional, TypedDict
+from typing import Annotated, Final, TypedDict
 
 import pymongo.errors
 from fastapi import Depends
@@ -49,11 +49,11 @@ class DatabaseHealth(TypedDict):
     timestamp: str
 
 
-_client: Optional[AsyncIOMotorClient] = None
-_database: Optional[AsyncIOMotorDatabase] = None
-_database_name: Optional[str] = None
-_runtime_config: Optional[MongoRuntimeConfig] = None
-_init_lock: Optional[asyncio.Lock] = None
+_client: AsyncIOMotorClient | None = None
+_database: AsyncIOMotorDatabase | None = None
+_database_name: str | None = None
+_runtime_config: MongoRuntimeConfig | None = None
+_init_lock: asyncio.Lock | None = None
 
 
 def _get_init_lock() -> asyncio.Lock:
@@ -109,7 +109,7 @@ async def _initialize_client_with_retries() -> AsyncIOMotorClient:
         runtime_config.max_pool_size,
     )
 
-    last_error: Optional[BaseException] = None
+    last_error: BaseException | None = None
 
     for attempt in range(1, runtime_config.retry_attempts + 1):
         try:
@@ -124,13 +124,7 @@ async def _initialize_client_with_retries() -> AsyncIOMotorClient:
             )
             await _ping_with_timeout(client, runtime_config.ping_timeout_seconds)
             return client
-        except (
-            pymongo.errors.ConnectionFailure,
-            pymongo.errors.ServerSelectionTimeoutError,
-            pymongo.errors.OperationFailure,
-            pymongo.errors.ConfigurationError,
-            asyncio.TimeoutError,
-        ) as exc:
+        except (TimeoutError, pymongo.errors.ConnectionFailure, pymongo.errors.ServerSelectionTimeoutError, pymongo.errors.OperationFailure, pymongo.errors.ConfigurationError) as exc:
             last_error = exc
             if attempt == runtime_config.retry_attempts:
                 break
@@ -145,10 +139,10 @@ async def _initialize_client_with_retries() -> AsyncIOMotorClient:
 
     if isinstance(last_error, pymongo.errors.ConfigurationError):
         logger.exception("MongoDB configuration error during initialization.")
-        raise RuntimeError("MongoDB configuration is invalid.") from last_error
+        raise RuntimeError("MongoDB configuration is invalid.") from last_error  # noqa: TRY004
     if isinstance(last_error, asyncio.TimeoutError):
         logger.exception("MongoDB initialization timed out.")
-        raise RuntimeError("MongoDB initialization timed out.") from last_error
+        raise RuntimeError("MongoDB initialization timed out.") from last_error  # noqa: TRY004
     logger.exception(
         "MongoDB initialization failed after %d attempts.",
         runtime_config.retry_attempts,
@@ -188,7 +182,9 @@ async def init_mongo_client() -> AsyncIOMotorClient:
     lock = _get_init_lock()
     async with lock:
         if _client is not None:
-            logger.debug("MongoDB client already initialized; reusing singleton client.")
+            logger.debug(
+                "MongoDB client already initialized; reusing singleton client."
+            )
             return _client
 
         client = await _initialize_client_with_retries()
@@ -273,7 +269,7 @@ def get_database() -> AsyncIOMotorDatabase:
     Usage:
         database = get_database()
     """
-    global _database
+    global _database, _database_name
 
     if _database is None:
         if _client is None:
@@ -310,12 +306,14 @@ async def get_database_health() -> DatabaseHealth:
         health = await get_database_health()
     """
     database_name = _database_name or ""
-    timestamp = datetime.now(timezone.utc).isoformat()
+    timestamp = datetime.now(UTC).isoformat()
 
     try:
         client = get_mongo_client()
         started_at = perf_counter()
-        await _ping_with_timeout(client, _runtime_config.ping_timeout_seconds if _runtime_config else 5.0)
+        await _ping_with_timeout(
+            client, _runtime_config.ping_timeout_seconds if _runtime_config else 5.0
+        )
         latency_ms = (perf_counter() - started_at) * 1000.0
         logger.debug("MongoDB health check succeeded.")
         return {
@@ -324,7 +322,7 @@ async def get_database_health() -> DatabaseHealth:
             "database_name": database_name,
             "timestamp": timestamp,
         }
-    except (pymongo.errors.PyMongoError, RuntimeError, asyncio.TimeoutError) as exc:
+    except (TimeoutError, pymongo.errors.PyMongoError, RuntimeError) as exc:
         logger.warning("MongoDB health check failed: %s", exc)
         return {
             "status": "degraded",

@@ -8,12 +8,11 @@ automation pipeline.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -67,7 +66,7 @@ class AutomationTask(BaseModel):
         ...,
         description="UTC timestamp when the task was created.",
     )
-    updated_at: Optional[datetime] = Field(
+    updated_at: datetime | None = Field(
         None,
         description="UTC timestamp of the last status change.",
     )
@@ -79,11 +78,11 @@ class AutomationTask(BaseModel):
         AutomationPriority.normal,
         description="Execution priority.",
     )
-    payload: Dict[str, Any] = Field(
+    payload: dict[str, Any] = Field(
         default_factory=dict,
         description="Arbitrary data that the task carries for execution.",
     )
-    tags: List[str] = Field(
+    tags: list[str] = Field(
         default_factory=list,
         description="List of tags for filtering and organisation.",
     )
@@ -108,7 +107,7 @@ class AutomationExecutionRequest(BaseModel):
         description="Human‑readable name for the task to be created.",
         examples=["daily-data-sync"],
     )
-    payload: Dict[str, Any] = Field(
+    payload: dict[str, Any] = Field(
         default_factory=dict,
         description="Data forwarded to the automation handler during execution.",
     )
@@ -122,7 +121,7 @@ class AutomationExecutionRequest(BaseModel):
         le=3600,
         description="Maximum allowed execution time in seconds before the task is forcefully terminated.",
     )
-    schedule: Optional[str] = Field(
+    schedule: str | None = Field(
         None,
         description="Cron expression for recurring execution (e.g., '0 2 * * *').",
     )
@@ -137,12 +136,14 @@ class AutomationExecutionRequest(BaseModel):
 
     @field_validator("schedule")
     @classmethod
-    def validate_cron_expression(cls, v: Optional[str]) -> Optional[str]:
+    def validate_cron_expression(cls, v: str | None) -> str | None:
         """Basic validation for a cron expression (must have five fields)."""
         if v is not None:
             parts = v.split()
             if len(parts) != 5:
-                raise ValueError("Schedule must be a valid cron expression with exactly 5 fields")
+                raise ValueError(
+                    "Schedule must be a valid cron expression with exactly 5 fields"
+                )
         return v
 
     @field_validator("task_name")
@@ -181,7 +182,7 @@ class AutomationExecutionResponse(BaseModel):
         description="Human‑readable confirmation message.",
     )
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(UTC),
         description="UTC timestamp when the task was created.",
     )
 
@@ -207,15 +208,15 @@ class AutomationResult(BaseModel):
         ...,
         description="Final status of the task.",
     )
-    started_at: Optional[datetime] = Field(
+    started_at: datetime | None = Field(
         None,
         description="UTC timestamp when execution began.",
     )
-    finished_at: Optional[datetime] = Field(
+    finished_at: datetime | None = Field(
         None,
         description="UTC timestamp when execution finished.",
     )
-    execution_time_ms: Optional[float] = Field(
+    execution_time_ms: float | None = Field(
         None,
         ge=0.0,
         description="Total wall‑clock execution time in milliseconds.",
@@ -224,11 +225,11 @@ class AutomationResult(BaseModel):
         None,
         description="Arbitrary result data produced by the task.",
     )
-    logs: List[str] = Field(
+    logs: list[str] = Field(
         default_factory=list,
         description="Captured log lines from the task execution.",
     )
-    error: Optional[str] = Field(
+    error: str | None = Field(
         None,
         description="Error message if the task failed.",
     )
@@ -252,7 +253,7 @@ class AutomationListResponse(BaseModel):
         ge=0,
         description="Total number of tasks matching the query.",
     )
-    tasks: List[AutomationTask] = Field(
+    tasks: list[AutomationTask] = Field(
         default_factory=list,
         description="Paginated list of automation tasks.",
     )

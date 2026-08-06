@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Tuple
+from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from openai import AsyncOpenAI
+    from openai import AsyncOpenAI, AsyncStream
+    from openai.types import CompletionUsage
+    from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 
 from core.config import Settings
@@ -54,7 +57,7 @@ class OpenRouterProvider(BaseAIProvider):
             getattr(settings.ai, "openrouter_model", None)
             or "meta-llama/llama-3.3-70b-instruct"
         )
-        self.supported_models: List[str] = [
+        self.supported_models: list[str] = [
             "meta-llama/llama-3.3-70b-instruct",
             "deepseek/deepseek-r1",
             "google/gemini-2.5-flash",
@@ -62,7 +65,7 @@ class OpenRouterProvider(BaseAIProvider):
             "openai/gpt-5-mini",
             "openai/gpt-5",
         ]
-        self._client: Optional[AsyncOpenAI] = None
+        self._client: AsyncOpenAI | None = None
 
     def _get_client(self) -> AsyncOpenAI:
         """Singleton accessor for the AsyncOpenAI Client pointed at OpenRouter.
@@ -100,7 +103,10 @@ class OpenRouterProvider(BaseAIProvider):
                 )
                 self.logger.info(
                     "Initialized AsyncOpenAI singleton client for OpenRouter",
-                    extra={"provider": self.provider_id, "base_url": _OPENROUTER_BASE_URL},
+                    extra={
+                        "provider": self.provider_id,
+                        "base_url": _OPENROUTER_BASE_URL,
+                    },
                 )
             except ImportError:
                 self.logger.error(
@@ -116,7 +122,7 @@ class OpenRouterProvider(BaseAIProvider):
                     extra={"error": str(exc)},
                 )
                 raise ProviderErrorException(
-                    self.provider_id, f"Client initialization failed: {str(exc)}"
+                    self.provider_id, f"Client initialization failed: {exc!s}"
                 )
         return self._client
 
@@ -136,13 +142,17 @@ class OpenRouterProvider(BaseAIProvider):
         try:
             from openai import (
                 APIConnectionError,
+                APIStatusError,
                 APITimeoutError,
                 AuthenticationError,
                 BadRequestError,
+                ConflictError,
+                InternalServerError,
                 LengthFinishReasonError,
                 NotFoundError,
                 PermissionDeniedError,
                 RateLimitError,
+                UnprocessableEntityError,
             )
         except ImportError:
             return ProviderErrorException(self.provider_id, str(exc))
@@ -175,7 +185,7 @@ class OpenRouterProvider(BaseAIProvider):
 
         # Context length via BadRequestError.body.error.code — no string matching on message
         if isinstance(exc, BadRequestError):
-            error_code: Optional[str] = None
+            error_code: str | None = None
             if exc.body and isinstance(exc.body, dict):
                 err_body = exc.body.get("error")  # type: ignore[union-attr]
                 if isinstance(err_body, dict):
@@ -213,15 +223,17 @@ class OpenRouterProvider(BaseAIProvider):
             status_code: int = exc.status_code
             if status_code == 404:
                 return InvalidModelException(model_name, self.provider_id)
-            return ProviderErrorException(self.provider_id, str(exc), status_code=status_code)
+            return ProviderErrorException(
+                self.provider_id, str(exc), status_code=status_code
+            )
 
         # Last-resort fallback for entirely unexpected exceptions
         return ProviderErrorException(self.provider_id, str(exc), status_code=502)
 
     def _parse_usage(
         self,
-        usage: Optional[CompletionUsage],
-        messages: List[Dict[str, str]],
+        usage: CompletionUsage | None,
+        messages: list[dict[str, str]],
         content: str,
     ) -> TokenUsage:
         """Parse SDK CompletionUsage into TokenUsage, with heuristic fallback.
@@ -249,8 +261,8 @@ class OpenRouterProvider(BaseAIProvider):
     async def generate_response(
         self,
         request: ChatRequest,
-        history: List[Dict[str, str]],
-    ) -> Tuple[str, TokenUsage]:
+        history: list[dict[str, str]],
+    ) -> tuple[str, TokenUsage]:
         """Generate a complete text response and token usage stats via OpenRouter.
 
         Args:
@@ -306,7 +318,7 @@ class OpenRouterProvider(BaseAIProvider):
     async def generate_stream(
         self,
         request: ChatRequest,
-        history: List[Dict[str, str]],
+        history: list[dict[str, str]],
     ) -> AsyncGenerator[str, None]:
         """Stream generated token chunks via OpenRouter streaming completions.
 
@@ -352,7 +364,11 @@ class OpenRouterProvider(BaseAIProvider):
         except Exception as exc:
             self.logger.error(
                 "OpenRouter stream creation failed",
-                extra={"provider": self.provider_id, "model": model_name, "error": str(exc)},
+                extra={
+                    "provider": self.provider_id,
+                    "model": model_name,
+                    "error": str(exc),
+                },
             )
             raise self._map_sdk_exception(exc, model_name)
 
@@ -389,7 +405,11 @@ class OpenRouterProvider(BaseAIProvider):
         except Exception as exc:
             self.logger.error(
                 "OpenRouter stream iteration error",
-                extra={"provider": self.provider_id, "model": model_name, "error": str(exc)},
+                extra={
+                    "provider": self.provider_id,
+                    "model": model_name,
+                    "error": str(exc),
+                },
             )
             raise self._map_sdk_exception(exc, model_name)
         finally:
@@ -405,7 +425,7 @@ class OpenRouterProvider(BaseAIProvider):
                 },
             )
 
-    async def check_health(self) -> Tuple[bool, Optional[float], str]:
+    async def check_health(self) -> tuple[bool, float | None, str]:
         """Perform a quick health ping test against OpenRouter.
 
         Returns:
@@ -428,7 +448,7 @@ class OpenRouterProvider(BaseAIProvider):
             return True, latency_ms, "Healthy"
         except Exception as exc:
             err_mapped = self._map_sdk_exception(exc, self.default_model)
-            return False, None, f"OpenRouter health check failed: {str(err_mapped)}"
+            return False, None, f"OpenRouter health check failed: {err_mapped!s}"
 
     async def startup(self) -> None:
         """Initialize client lazily during application startup."""

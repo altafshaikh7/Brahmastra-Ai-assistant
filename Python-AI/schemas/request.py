@@ -15,7 +15,7 @@ The design follows enterprise best practices:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -39,16 +39,16 @@ class BaseRequest(BaseModel):
     explicitly by clients for tracing.
     """
 
-    request_id: Optional[str] = Field(
+    request_id: str | None = Field(
         None,
         description="Unique identifier for the request (echoed back in the response).",
         examples=["req_abc123"],
     )
-    metadata: Dict[str, Any] = Field(
+    metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Arbitrary key‑value pairs attached by the client for observability.",
     )
-    timestamp: Optional[datetime] = Field(
+    timestamp: datetime | None = Field(
         None,
         description="Client‑supplied timestamp; defaults to now if omitted.",
     )
@@ -93,7 +93,7 @@ class ToolExecuteRequest(BaseRequest):
         description="Name of the tool to execute (must be registered).",
         examples=["ping", "echo"],
     )
-    arguments: Dict[str, Any] = Field(
+    arguments: dict[str, Any] = Field(
         default_factory=dict,
         description="Keyword arguments passed to the tool.",
         examples=[{"host": "127.0.0.1"}],
@@ -114,7 +114,9 @@ class ToolExecuteRequest(BaseRequest):
     def tool_name_must_be_valid(cls, v: str) -> str:
         """Ensure the tool name contains only permitted characters."""
         if not v.replace("_", "").replace("-", "").isalnum():
-            raise ValueError("tool_name must contain only letters, numbers, underscores, or hyphens")
+            raise ValueError(
+                "tool_name must contain only letters, numbers, underscores, or hyphens"
+            )
         return v.strip()
 
 
@@ -132,11 +134,11 @@ class AutomationRequest(BaseRequest):
         description="Human‑readable name of the automation task.",
         examples=["daily-backup"],
     )
-    payload: Dict[str, Any] = Field(
+    payload: dict[str, Any] = Field(
         default_factory=dict,
         description="Arbitrary data forwarded to the automation handler.",
     )
-    schedule: Optional[str] = Field(
+    schedule: str | None = Field(
         None,
         description="Cron expression for recurring execution (e.g., '0 2 * * *').",
     )
@@ -153,12 +155,14 @@ class AutomationRequest(BaseRequest):
 
     @field_validator("schedule")
     @classmethod
-    def validate_cron(cls, v: Optional[str]) -> Optional[str]:
+    def validate_cron(cls, v: str | None) -> str | None:
         """Basic validation for cron expressions (five fields)."""
         if v is not None:
             parts = v.split()
             if len(parts) != 5:
-                raise ValueError("Schedule must be a valid cron expression with exactly 5 fields")
+                raise ValueError(
+                    "Schedule must be a valid cron expression with exactly 5 fields"
+                )
         return v
 
 
@@ -203,12 +207,12 @@ class SearchRequest(BaseRequest):
         description="Free‑text search query.",
         examples=["Brahmastra AI"],
     )
-    filters: Dict[str, Any] = Field(
+    filters: dict[str, Any] = Field(
         default_factory=dict,
         description="Key‑value pairs for exact or range filtering.",
         examples=[{"status": "active", "created_after": "2024-01-01"}],
     )
-    sort: Optional[str] = Field(
+    sort: str | None = Field(
         None,
         description="Field to sort by, optionally prefixed with '-' for descending order.",
         examples=["-created_at", "name"],
@@ -237,7 +241,7 @@ class BatchRequest(BaseRequest, Generic[T]):
     The ``items`` list carries the domain‑specific request payloads.
     """
 
-    items: List[T] = Field(
+    items: list[T] = Field(
         ...,
         min_length=1,
         description="List of items to process in a single batch.",

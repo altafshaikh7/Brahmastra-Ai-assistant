@@ -46,13 +46,12 @@ Example:
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from http import HTTPStatus
 from typing import (
     Any,
-    Callable,
     Final,
     Literal,
-    Optional,
     TypeAlias,
     TypedDict,
 )
@@ -84,20 +83,24 @@ EVENT_HTTP_REQUEST_FAILED: Final[str] = "http_request_failed"
 DEFAULT_HTTP_VERSION: Final[str] = "1.1"
 
 # Default excluded path prefixes for health/metrics endpoints
-DEFAULT_EXCLUDED_PREFIXES: Final[frozenset[str]] = frozenset({
-    "/health",
-    "/healthz",
-    "/ready",
-    "/live",
-    "/metrics",
-    "/prometheus",
-    "/docs",
-    "/redoc",
-    "/openapi.json",
-})
+DEFAULT_EXCLUDED_PREFIXES: Final[frozenset[str]] = frozenset(
+    {
+        "/health",
+        "/healthz",
+        "/ready",
+        "/live",
+        "/metrics",
+        "/prometheus",
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+    }
+)
 
 # HTTP status code boundaries for log level determination (use HTTPStatus enum)
-HTTP_STATUS_SERVER_ERROR_THRESHOLD: Final[HTTPStatusCode] = HTTPStatus.INTERNAL_SERVER_ERROR.value
+HTTP_STATUS_SERVER_ERROR_THRESHOLD: Final[HTTPStatusCode] = (
+    HTTPStatus.INTERNAL_SERVER_ERROR.value
+)
 HTTP_STATUS_CLIENT_ERROR_THRESHOLD: Final[HTTPStatusCode] = HTTPStatus.BAD_REQUEST.value
 
 # Request state attribute names - consistency across middleware
@@ -140,8 +143,8 @@ class RouteMetadata(TypedDict, total=False):
         endpoint_name: The name of the endpoint handler function (optional)
     """
 
-    route_name: Optional[str]
-    endpoint_name: Optional[str]
+    route_name: str | None
+    endpoint_name: str | None
 
 
 class TraceContext(TypedDict, total=False):
@@ -159,7 +162,7 @@ class TraceContext(TypedDict, total=False):
 
     trace_id: str
     span_id: str
-    parent_span_id: Optional[str]
+    parent_span_id: str | None
     trace_flags: str
     trace_state: str
 
@@ -195,20 +198,20 @@ class HTTPAccessLogData(TypedDict, total=False):
     path: str
     query_string: str
     http_version: str
-    route_name: Optional[str]
-    endpoint_name: Optional[str]
+    route_name: str | None
+    endpoint_name: str | None
     status_code: HTTPStatusCode
     client_ip: str
     user_agent: str
     duration_ms: DurationMilliseconds
     duration_ns: DurationNanoseconds
     content_length: int
-    request_id: Optional[str]
-    correlation_id: Optional[str]
-    trace_id: Optional[str]
-    span_id: Optional[str]
-    exception_type: Optional[str]
-    exception_message: Optional[str]
+    request_id: str | None
+    correlation_id: str | None
+    trace_id: str | None
+    span_id: str | None
+    exception_type: str | None
+    exception_message: str | None
 
 
 class LoggingMiddleware(BaseHTTPMiddleware):
@@ -398,8 +401,8 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         user_agent: str = self._extract_user_agent(request)
 
         # Extract correlation/request IDs
-        request_id: Optional[str] = getattr(request.state, REQUEST_ID_ATTR, None)
-        correlation_id: Optional[str] = getattr(request.state, CORRELATION_ID_ATTR, None)
+        request_id: str | None = getattr(request.state, REQUEST_ID_ATTR, None)
+        correlation_id: str | None = getattr(request.state, CORRELATION_ID_ATTR, None)
 
         # Extract distributed tracing context
         trace_context: TraceContext = self._extract_trace_context(request)
@@ -486,14 +489,14 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         route = request.scope.get("route")
         if route is not None:
             # Extract route name (typically the operation_id or path)
-            route_name: Optional[str] = getattr(route, "name", None)
+            route_name: str | None = getattr(route, "name", None)
             if route_name is not None:
                 route_metadata["route_name"] = route_name
 
             # Extract endpoint handler function name (for service map)
-            endpoint: Optional[Callable[..., Any]] = getattr(route, "endpoint", None)
+            endpoint: Callable[..., Any] | None = getattr(route, "endpoint", None)
             if endpoint is not None:
-                endpoint_name: Optional[str] = getattr(endpoint, "__name__", None)
+                endpoint_name: str | None = getattr(endpoint, "__name__", None)
                 if endpoint_name is not None:
                     route_metadata["endpoint_name"] = endpoint_name
 
@@ -573,7 +576,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             as it validates and properly parses multi-proxy scenarios.
         """
         # Try to get from request.state (set by RequestContextMiddleware)
-        client_ip: Optional[str] = getattr(request.state, CLIENT_IP_ATTR, None)
+        client_ip: str | None = getattr(request.state, CLIENT_IP_ATTR, None)
         if client_ip:
             return client_ip
 
@@ -601,7 +604,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             We trust the logger's sensitive data filtering for redaction.
         """
         # Try to get from request.state (set by RequestContextMiddleware)
-        user_agent: Optional[str] = getattr(request.state, USER_AGENT_ATTR, None)
+        user_agent: str | None = getattr(request.state, USER_AGENT_ATTR, None)
         if user_agent:
             return user_agent
 
@@ -609,7 +612,9 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         return request.headers.get("User-Agent", DEFAULT_USER_AGENT)
 
     @staticmethod
-    def _calculate_duration_ms(duration_ns: DurationNanoseconds) -> DurationMilliseconds:
+    def _calculate_duration_ms(
+        duration_ns: DurationNanoseconds,
+    ) -> DurationMilliseconds:
         """Calculate request duration in milliseconds with high precision.
 
         Converts nanosecond precision timing to milliseconds with fixed
@@ -652,7 +657,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             Content-Length of -1 is a standard sentinel indicating unknown size.
             This is compatible with tools like curl, wget, and observability platforms.
         """
-        content_length_header: Optional[str] = response.headers.get("content-length")
+        content_length_header: str | None = response.headers.get("content-length")
         if content_length_header is None:
             return DEFAULT_CONTENT_LENGTH
 
@@ -667,7 +672,9 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             return DEFAULT_CONTENT_LENGTH
 
     @staticmethod
-    def _determine_log_level(status_code: HTTPStatusCode) -> tuple[LogLevel, LoggerMethod]:
+    def _determine_log_level(
+        status_code: HTTPStatusCode,
+    ) -> tuple[LogLevel, LoggerMethod]:
         """Determine appropriate log level and logger method based on HTTP status.
 
         Uses standard HTTP status code conventions:
@@ -728,7 +735,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         }
 
         # Determine log level and logger method based on status code
-        log_level, log_method = self._determine_log_level(status_code)
+        _log_level, log_method = self._determine_log_level(status_code)
 
         # Log the request with structured context
         log_method(EVENT_HTTP_REQUEST_COMPLETED, extra=log_payload)
@@ -773,27 +780,27 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         }
 
         # Log the exception with full stack trace (exc_info=True adds traceback)
-        logger.error(EVENT_HTTP_REQUEST_FAILED, extra=log_payload, exc_info=True)
+        logger.error(EVENT_HTTP_REQUEST_FAILED, extra=log_payload)
 
 
 # Public API: Module-level alias for backward compatibility
 logging_middleware: Final[type[LoggingMiddleware]] = LoggingMiddleware
 
 __all__ = [
-    # Main class
-    "LoggingMiddleware",
-    # Public alias
-    "logging_middleware",
-    # TypedDicts for external use (type hints, documentation)
-    "HTTPAccessLogData",
-    "RouteMetadata",
-    "TraceContext",
+    "DATADOG_PARENT_ID_HEADER",
+    "DATADOG_TRACE_ID_HEADER",
     # Event constants for log filtering/routing
     "EVENT_HTTP_REQUEST_COMPLETED",
     "EVENT_HTTP_REQUEST_FAILED",
     # Header constants for distributed tracing integration
     "TRACEPARENT_HEADER",
     "TRACESTATE_HEADER",
-    "DATADOG_TRACE_ID_HEADER",
-    "DATADOG_PARENT_ID_HEADER",
+    # TypedDicts for external use (type hints, documentation)
+    "HTTPAccessLogData",
+    # Main class
+    "LoggingMiddleware",
+    "RouteMetadata",
+    "TraceContext",
+    # Public alias
+    "logging_middleware",
 ]

@@ -13,7 +13,8 @@ import abc
 import asyncio
 import json
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Type
+from collections.abc import AsyncGenerator
+from typing import Any
 
 import httpx
 
@@ -22,7 +23,6 @@ from core.exceptions import ApplicationError, ErrorCode
 from dependencies.database import get_database
 from schemas.chat import (
     AIHealthResponse,
-    ChatMessage,
     ChatRequest,
     ChatResponse,
     ModelInfo,
@@ -48,7 +48,7 @@ class AIServiceException(ApplicationError):
         self,
         message: str = "AI service error",
         status_code: int = 500,
-        details: Optional[Dict[str, Any]] = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(
             message=message,
@@ -83,7 +83,7 @@ class TimeoutException(AIServiceException):
 class RateLimitException(AIServiceException):
     """Raised when an AI provider rate limit is exceeded."""
 
-    def __init__(self, provider: str, details: Optional[str] = None) -> None:
+    def __init__(self, provider: str, details: str | None = None) -> None:
         super().__init__(
             message=f"Rate limit exceeded for AI provider '{provider}'. {details or ''}".strip(),
             status_code=429,
@@ -105,7 +105,9 @@ class NetworkErrorException(AIServiceException):
 class ProviderErrorException(AIServiceException):
     """Raised when an AI provider returns an API error response."""
 
-    def __init__(self, provider: str, error_message: str, status_code: int = 502) -> None:
+    def __init__(
+        self, provider: str, error_message: str, status_code: int = 502
+    ) -> None:
         super().__init__(
             message=f"AI provider '{provider}' error: {error_message}",
             status_code=status_code,
@@ -137,30 +139,27 @@ class BaseAIProvider(abc.ABC):
         self.provider_id: str = "base"
         self.display_name: str = "Base Provider"
         self.default_model: str = ""
-        self.supported_models: List[str] = []
+        self.supported_models: list[str] = []
 
     @abc.abstractmethod
     async def generate_response(
         self,
         request: ChatRequest,
-        conversation_history: List[Dict[str, str]],
-    ) -> Tuple[str, TokenUsage]:
+        conversation_history: list[dict[str, str]],
+    ) -> tuple[str, TokenUsage]:
         """Generate a complete text response and token usage stats."""
-        pass
 
     @abc.abstractmethod
     async def generate_stream(
         self,
         request: ChatRequest,
-        conversation_history: List[Dict[str, str]],
+        conversation_history: list[dict[str, str]],
     ) -> AsyncGenerator[str, None]:
         """Generate a streaming SSE response token stream."""
-        pass
 
     @abc.abstractmethod
-    async def check_health(self) -> Tuple[bool, Optional[float], str]:
+    async def check_health(self) -> tuple[bool, float | None, str]:
         """Perform a quick health ping test. Returns (is_healthy, latency_ms, status_message)."""
-        pass
 
 
 # =============================================================================
@@ -175,9 +174,10 @@ class GeminiProvider(BaseAIProvider):
         super().__init__(settings)
         self.provider_id = "gemini"
         self.display_name = "Google Gemini"
-        self.default_model = (
-            settings.ai.gemini_model
-            or (settings.ai.model_name if settings.ai.provider == "gemini" else "gemini-2.5-flash")
+        self.default_model = settings.ai.gemini_model or (
+            settings.ai.model_name
+            if settings.ai.provider == "gemini"
+            else "gemini-2.5-flash"
         )
         self.supported_models = [
             "gemini-2.5-flash",
@@ -185,31 +185,41 @@ class GeminiProvider(BaseAIProvider):
             "gemini-1.5-flash",
             "gemini-2.0-flash-exp",
         ]
-        self._client: Optional[Any] = None
+        self._client: Any | None = None
 
     def _get_client(self) -> Any:
         """Singleton accessor for Google GenAI Client."""
         if self._client is None:
-            api_key = self.settings.ai.api_key.get_secret_value() if self.settings.ai.api_key else None
+            api_key = (
+                self.settings.ai.api_key.get_secret_value()
+                if self.settings.ai.api_key
+                else None
+            )
             if not api_key:
                 raise APIKeyMissingException(self.provider_id)
             try:
                 from google import genai
+
                 self._client = genai.Client(api_key=api_key)
             except Exception as exc:
-                logger.error("Failed to initialize Google GenAI client", extra={"error": str(exc)})
-                raise ProviderErrorException(self.provider_id, f"Client initialization failed: {str(exc)}")
+                logger.error(
+                    "Failed to initialize Google GenAI client",
+                    extra={"error": str(exc)},
+                )
+                raise ProviderErrorException(
+                    self.provider_id, f"Client initialization failed: {exc!s}"
+                )
         return self._client
 
-    def _resolve_model(self, requested_model: Optional[str]) -> str:
+    def _resolve_model(self, requested_model: str | None) -> str:
         model = requested_model or self.default_model
         return model
 
     async def generate_response(
         self,
         request: ChatRequest,
-        conversation_history: List[Dict[str, str]],
-    ) -> Tuple[str, TokenUsage]:
+        conversation_history: list[dict[str, str]],
+    ) -> tuple[str, TokenUsage]:
         client = self._get_client()
         model_name = self._resolve_model(None)
 
@@ -233,11 +243,23 @@ class GeminiProvider(BaseAIProvider):
             loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(None, _call_gemini)
             response_text = response.text or ""
-            
+
             # Extract token stats if present
-            prompt_tokens = getattr(response.usage_metadata, "prompt_token_count", 0) if hasattr(response, "usage_metadata") and response.usage_metadata else len(full_prompt) // 4
-            completion_tokens = getattr(response.usage_metadata, "candidates_token_count", 0) if hasattr(response, "usage_metadata") and response.usage_metadata else len(response_text) // 4
-            total_tokens = getattr(response.usage_metadata, "total_token_count", 0) if hasattr(response, "usage_metadata") and response.usage_metadata else (prompt_tokens + completion_tokens)
+            prompt_tokens = (
+                getattr(response.usage_metadata, "prompt_token_count", 0)
+                if hasattr(response, "usage_metadata") and response.usage_metadata
+                else len(full_prompt) // 4
+            )
+            completion_tokens = (
+                getattr(response.usage_metadata, "candidates_token_count", 0)
+                if hasattr(response, "usage_metadata") and response.usage_metadata
+                else len(response_text) // 4
+            )
+            total_tokens = (
+                getattr(response.usage_metadata, "total_token_count", 0)
+                if hasattr(response, "usage_metadata") and response.usage_metadata
+                else (prompt_tokens + completion_tokens)
+            )
 
             tokens = TokenUsage(
                 prompt_tokens=prompt_tokens,
@@ -246,13 +268,15 @@ class GeminiProvider(BaseAIProvider):
             )
             return response_text, tokens
         except Exception as exc:
-            logger.error("Gemini API call failed", extra={"error": str(exc), "model": model_name})
+            logger.error(
+                "Gemini API call failed", extra={"error": str(exc), "model": model_name}
+            )
             raise ProviderErrorException(self.provider_id, str(exc))
 
     async def generate_stream(
         self,
         request: ChatRequest,
-        conversation_history: List[Dict[str, str]],
+        conversation_history: list[dict[str, str]],
     ) -> AsyncGenerator[str, None]:
         client = self._get_client()
         model_name = self._resolve_model(None)
@@ -283,21 +307,23 @@ class GeminiProvider(BaseAIProvider):
             logger.error("Gemini streaming call failed", extra={"error": str(exc)})
             raise ProviderErrorException(self.provider_id, str(exc))
 
-    async def check_health(self) -> Tuple[bool, Optional[float], str]:
+    async def check_health(self) -> tuple[bool, float | None, str]:
         start = time.perf_counter()
         try:
             client = self._get_client()
+
             def _ping():
                 return client.models.generate_content(
                     model=self.default_model,
                     contents="ping",
                 )
+
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, _ping)
             latency = (time.perf_counter() - start) * 1000.0
             return True, round(latency, 2), "Healthy"
         except Exception as exc:
-            return False, None, f"Gemini ping failed: {str(exc)}"
+            return False, None, f"Gemini ping failed: {exc!s}"
 
 
 class GroqProvider(BaseAIProvider):
@@ -314,22 +340,33 @@ class GroqProvider(BaseAIProvider):
             "qwen/qwen3-32b",
             "mixtral-8x7b-32768",
         ]
-        self._client: Optional[Any] = None
+        self._client: Any | None = None
 
     def _get_client(self) -> Any:
         if self._client is None:
-            api_key = self.settings.ai.api_key.get_secret_value() if self.settings.ai.api_key else None
+            api_key = (
+                self.settings.ai.api_key.get_secret_value()
+                if self.settings.ai.api_key
+                else None
+            )
             if not api_key:
                 raise APIKeyMissingException(self.provider_id)
             try:
                 from groq import AsyncGroq
+
                 self._client = AsyncGroq(api_key=api_key)
             except Exception as exc:
-                logger.error("Failed to initialize Groq client", extra={"error": str(exc)})
-                raise ProviderErrorException(self.provider_id, f"Groq client init failed: {str(exc)}")
+                logger.error(
+                    "Failed to initialize Groq client", extra={"error": str(exc)}
+                )
+                raise ProviderErrorException(
+                    self.provider_id, f"Groq client init failed: {exc!s}"
+                )
         return self._client
 
-    def _prepare_messages(self, request: ChatRequest, conversation_history: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    def _prepare_messages(
+        self, request: ChatRequest, conversation_history: list[dict[str, str]]
+    ) -> list[dict[str, str]]:
         messages = []
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})
@@ -340,8 +377,8 @@ class GroqProvider(BaseAIProvider):
     async def generate_response(
         self,
         request: ChatRequest,
-        conversation_history: List[Dict[str, str]],
-    ) -> Tuple[str, TokenUsage]:
+        conversation_history: list[dict[str, str]],
+    ) -> tuple[str, TokenUsage]:
         client = self._get_client()
         model_name = request.max_tokens or self.default_model
         model_name = self.default_model
@@ -351,25 +388,33 @@ class GroqProvider(BaseAIProvider):
             response = await client.chat.completions.create(
                 model=model_name,
                 messages=messages,
-                temperature=request.temperature if request.temperature is not None else self.settings.ai.temperature,
+                temperature=(
+                    request.temperature
+                    if request.temperature is not None
+                    else self.settings.ai.temperature
+                ),
                 max_tokens=request.max_tokens or self.settings.ai.max_output_tokens,
             )
             content = response.choices[0].message.content or ""
             usage = getattr(response, "usage", None)
             tokens = TokenUsage(
                 prompt_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
-                completion_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
+                completion_tokens=(
+                    getattr(usage, "completion_tokens", 0) if usage else 0
+                ),
                 total_tokens=getattr(usage, "total_tokens", 0) if usage else 0,
             )
             return content, tokens
         except Exception as exc:
-            logger.error("Groq API call failed", extra={"error": str(exc), "model": model_name})
+            logger.error(
+                "Groq API call failed", extra={"error": str(exc), "model": model_name}
+            )
             raise ProviderErrorException(self.provider_id, str(exc))
 
     async def generate_stream(
         self,
         request: ChatRequest,
-        conversation_history: List[Dict[str, str]],
+        conversation_history: list[dict[str, str]],
     ) -> AsyncGenerator[str, None]:
         client = self._get_client()
         messages = self._prepare_messages(request, conversation_history)
@@ -378,7 +423,11 @@ class GroqProvider(BaseAIProvider):
             stream = await client.chat.completions.create(
                 model=self.default_model,
                 messages=messages,
-                temperature=request.temperature if request.temperature is not None else self.settings.ai.temperature,
+                temperature=(
+                    request.temperature
+                    if request.temperature is not None
+                    else self.settings.ai.temperature
+                ),
                 max_tokens=request.max_tokens or self.settings.ai.max_output_tokens,
                 stream=True,
             )
@@ -389,7 +438,7 @@ class GroqProvider(BaseAIProvider):
             logger.error("Groq streaming call failed", extra={"error": str(exc)})
             raise ProviderErrorException(self.provider_id, str(exc))
 
-    async def check_health(self) -> Tuple[bool, Optional[float], str]:
+    async def check_health(self) -> tuple[bool, float | None, str]:
         start = time.perf_counter()
         try:
             client = self._get_client()
@@ -401,7 +450,7 @@ class GroqProvider(BaseAIProvider):
             latency = (time.perf_counter() - start) * 1000.0
             return True, round(latency, 2), "Healthy"
         except Exception as exc:
-            return False, None, f"Groq ping failed: {str(exc)}"
+            return False, None, f"Groq ping failed: {exc!s}"
 
 
 class OpenAIProvider(BaseAIProvider):
@@ -412,12 +461,22 @@ class OpenAIProvider(BaseAIProvider):
         self.provider_id = "openai"
         self.display_name = "OpenAI"
         self.default_model = "gpt-4o"
-        self.supported_models = ["gpt-4.1", "gpt-5", "gpt-5-mini", "gpt-4o", "gpt-4o-mini"]
-        self._http_client: Optional[httpx.AsyncClient] = None
+        self.supported_models = [
+            "gpt-4.1",
+            "gpt-5",
+            "gpt-5-mini",
+            "gpt-4o",
+            "gpt-4o-mini",
+        ]
+        self._http_client: httpx.AsyncClient | None = None
 
     def _get_http_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
-            api_key = self.settings.ai.api_key.get_secret_value() if self.settings.ai.api_key else None
+            api_key = (
+                self.settings.ai.api_key.get_secret_value()
+                if self.settings.ai.api_key
+                else None
+            )
             if not api_key:
                 raise APIKeyMissingException(self.provider_id)
             self._http_client = httpx.AsyncClient(
@@ -430,7 +489,9 @@ class OpenAIProvider(BaseAIProvider):
             )
         return self._http_client
 
-    def _prepare_messages(self, request: ChatRequest, conversation_history: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    def _prepare_messages(
+        self, request: ChatRequest, conversation_history: list[dict[str, str]]
+    ) -> list[dict[str, str]]:
         messages = []
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})
@@ -441,14 +502,18 @@ class OpenAIProvider(BaseAIProvider):
     async def generate_response(
         self,
         request: ChatRequest,
-        conversation_history: List[Dict[str, str]],
-    ) -> Tuple[str, TokenUsage]:
+        conversation_history: list[dict[str, str]],
+    ) -> tuple[str, TokenUsage]:
         client = self._get_http_client()
         messages = self._prepare_messages(request, conversation_history)
         payload = {
             "model": self.default_model,
             "messages": messages,
-            "temperature": request.temperature if request.temperature is not None else self.settings.ai.temperature,
+            "temperature": (
+                request.temperature
+                if request.temperature is not None
+                else self.settings.ai.temperature
+            ),
             "max_tokens": request.max_tokens or self.settings.ai.max_output_tokens,
         }
 
@@ -459,7 +524,9 @@ class OpenAIProvider(BaseAIProvider):
             elif res.status_code == 429:
                 raise RateLimitException(self.provider_id, res.text)
             elif res.status_code != 200:
-                raise ProviderErrorException(self.provider_id, res.text, status_code=res.status_code)
+                raise ProviderErrorException(
+                    self.provider_id, res.text, status_code=res.status_code
+                )
 
             data = res.json()
             content = data["choices"][0]["message"]["content"] or ""
@@ -471,30 +538,42 @@ class OpenAIProvider(BaseAIProvider):
             )
             return content, tokens
         except httpx.TimeoutException:
-            raise TimeoutException(self.provider_id, float(self.settings.ai.timeout_seconds))
+            raise TimeoutException(
+                self.provider_id, float(self.settings.ai.timeout_seconds)
+            )
         except httpx.RequestError as exc:
             raise NetworkErrorException(self.provider_id, str(exc))
 
     async def generate_stream(
         self,
         request: ChatRequest,
-        conversation_history: List[Dict[str, str]],
+        conversation_history: list[dict[str, str]],
     ) -> AsyncGenerator[str, None]:
         client = self._get_http_client()
         messages = self._prepare_messages(request, conversation_history)
         payload = {
             "model": self.default_model,
             "messages": messages,
-            "temperature": request.temperature if request.temperature is not None else self.settings.ai.temperature,
+            "temperature": (
+                request.temperature
+                if request.temperature is not None
+                else self.settings.ai.temperature
+            ),
             "max_tokens": request.max_tokens or self.settings.ai.max_output_tokens,
             "stream": True,
         }
 
         try:
-            async with client.stream("POST", "/chat/completions", json=payload) as response:
+            async with client.stream(
+                "POST", "/chat/completions", json=payload
+            ) as response:
                 if response.status_code != 200:
                     error_body = await response.aread()
-                    raise ProviderErrorException(self.provider_id, error_body.decode("utf-8"), response.status_code)
+                    raise ProviderErrorException(
+                        self.provider_id,
+                        error_body.decode("utf-8"),
+                        response.status_code,
+                    )
 
                 async for line in response.aiter_lines():
                     line = line.strip()
@@ -510,11 +589,13 @@ class OpenAIProvider(BaseAIProvider):
                         except json.JSONDecodeError:
                             continue
         except httpx.TimeoutException:
-            raise TimeoutException(self.provider_id, float(self.settings.ai.timeout_seconds))
+            raise TimeoutException(
+                self.provider_id, float(self.settings.ai.timeout_seconds)
+            )
         except httpx.RequestError as exc:
             raise NetworkErrorException(self.provider_id, str(exc))
 
-    async def check_health(self) -> Tuple[bool, Optional[float], str]:
+    async def check_health(self) -> tuple[bool, float | None, str]:
         start = time.perf_counter()
         try:
             client = self._get_http_client()
@@ -524,7 +605,7 @@ class OpenAIProvider(BaseAIProvider):
                 return True, round(latency, 2), "Healthy"
             return False, None, f"Status code {res.status_code}"
         except Exception as exc:
-            return False, None, f"OpenAI health check failed: {str(exc)}"
+            return False, None, f"OpenAI health check failed: {exc!s}"
 
 
 class OpenRouterProvider(BaseAIProvider):
@@ -534,7 +615,9 @@ class OpenRouterProvider(BaseAIProvider):
         super().__init__(settings)
         self.provider_id = "openrouter"
         self.display_name = "OpenRouter"
-        self.default_model = settings.ai.openrouter_model or "meta-llama/llama-3.3-70b-instruct"
+        self.default_model = (
+            settings.ai.openrouter_model or "meta-llama/llama-3.3-70b-instruct"
+        )
         self.supported_models = [
             "meta-llama/llama-3.3-70b-instruct",
             "deepseek/deepseek-r1",
@@ -542,11 +625,15 @@ class OpenRouterProvider(BaseAIProvider):
             "openai/gpt-4o",
             "google/gemini-2.5-flash",
         ]
-        self._http_client: Optional[httpx.AsyncClient] = None
+        self._http_client: httpx.AsyncClient | None = None
 
     def _get_http_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
-            api_key = self.settings.ai.api_key.get_secret_value() if self.settings.ai.api_key else None
+            api_key = (
+                self.settings.ai.api_key.get_secret_value()
+                if self.settings.ai.api_key
+                else None
+            )
             if not api_key:
                 raise APIKeyMissingException(self.provider_id)
             self._http_client = httpx.AsyncClient(
@@ -561,7 +648,9 @@ class OpenRouterProvider(BaseAIProvider):
             )
         return self._http_client
 
-    def _prepare_messages(self, request: ChatRequest, conversation_history: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    def _prepare_messages(
+        self, request: ChatRequest, conversation_history: list[dict[str, str]]
+    ) -> list[dict[str, str]]:
         messages = []
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})
@@ -572,14 +661,18 @@ class OpenRouterProvider(BaseAIProvider):
     async def generate_response(
         self,
         request: ChatRequest,
-        conversation_history: List[Dict[str, str]],
-    ) -> Tuple[str, TokenUsage]:
+        conversation_history: list[dict[str, str]],
+    ) -> tuple[str, TokenUsage]:
         client = self._get_http_client()
         messages = self._prepare_messages(request, conversation_history)
         payload = {
             "model": self.default_model,
             "messages": messages,
-            "temperature": request.temperature if request.temperature is not None else self.settings.ai.temperature,
+            "temperature": (
+                request.temperature
+                if request.temperature is not None
+                else self.settings.ai.temperature
+            ),
             "max_tokens": request.max_tokens or self.settings.ai.max_output_tokens,
         }
 
@@ -590,7 +683,9 @@ class OpenRouterProvider(BaseAIProvider):
             elif res.status_code == 429:
                 raise RateLimitException(self.provider_id, res.text)
             elif res.status_code != 200:
-                raise ProviderErrorException(self.provider_id, res.text, status_code=res.status_code)
+                raise ProviderErrorException(
+                    self.provider_id, res.text, status_code=res.status_code
+                )
 
             data = res.json()
             content = data["choices"][0]["message"]["content"] or ""
@@ -602,30 +697,42 @@ class OpenRouterProvider(BaseAIProvider):
             )
             return content, tokens
         except httpx.TimeoutException:
-            raise TimeoutException(self.provider_id, float(self.settings.ai.timeout_seconds))
+            raise TimeoutException(
+                self.provider_id, float(self.settings.ai.timeout_seconds)
+            )
         except httpx.RequestError as exc:
             raise NetworkErrorException(self.provider_id, str(exc))
 
     async def generate_stream(
         self,
         request: ChatRequest,
-        conversation_history: List[Dict[str, str]],
+        conversation_history: list[dict[str, str]],
     ) -> AsyncGenerator[str, None]:
         client = self._get_http_client()
         messages = self._prepare_messages(request, conversation_history)
         payload = {
             "model": self.default_model,
             "messages": messages,
-            "temperature": request.temperature if request.temperature is not None else self.settings.ai.temperature,
+            "temperature": (
+                request.temperature
+                if request.temperature is not None
+                else self.settings.ai.temperature
+            ),
             "max_tokens": request.max_tokens or self.settings.ai.max_output_tokens,
             "stream": True,
         }
 
         try:
-            async with client.stream("POST", "/chat/completions", json=payload) as response:
+            async with client.stream(
+                "POST", "/chat/completions", json=payload
+            ) as response:
                 if response.status_code != 200:
                     error_body = await response.aread()
-                    raise ProviderErrorException(self.provider_id, error_body.decode("utf-8"), response.status_code)
+                    raise ProviderErrorException(
+                        self.provider_id,
+                        error_body.decode("utf-8"),
+                        response.status_code,
+                    )
 
                 async for line in response.aiter_lines():
                     line = line.strip()
@@ -641,11 +748,13 @@ class OpenRouterProvider(BaseAIProvider):
                         except json.JSONDecodeError:
                             continue
         except httpx.TimeoutException:
-            raise TimeoutException(self.provider_id, float(self.settings.ai.timeout_seconds))
+            raise TimeoutException(
+                self.provider_id, float(self.settings.ai.timeout_seconds)
+            )
         except httpx.RequestError as exc:
             raise NetworkErrorException(self.provider_id, str(exc))
 
-    async def check_health(self) -> Tuple[bool, Optional[float], str]:
+    async def check_health(self) -> tuple[bool, float | None, str]:
         start = time.perf_counter()
         try:
             client = self._get_http_client()
@@ -655,7 +764,7 @@ class OpenRouterProvider(BaseAIProvider):
                 return True, round(latency, 2), "Healthy"
             return False, None, f"Status code {res.status_code}"
         except Exception as exc:
-            return False, None, f"OpenRouter health check failed: {str(exc)}"
+            return False, None, f"OpenRouter health check failed: {exc!s}"
 
 
 class OllamaProvider(BaseAIProvider):
@@ -667,8 +776,12 @@ class OllamaProvider(BaseAIProvider):
         self.display_name = "Ollama Local AI"
         self.default_model = "llama3"
         self.supported_models = ["llama3", "phi3", "mistral", "deepseek"]
-        self.base_url = str(settings.ai.base_url) if settings.ai.base_url else "http://localhost:11434"
-        self._http_client: Optional[httpx.AsyncClient] = None
+        self.base_url = (
+            str(settings.ai.base_url)
+            if settings.ai.base_url
+            else "http://localhost:11434"
+        )
+        self._http_client: httpx.AsyncClient | None = None
 
     def _get_http_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
@@ -678,7 +791,9 @@ class OllamaProvider(BaseAIProvider):
             )
         return self._http_client
 
-    def _prepare_messages(self, request: ChatRequest, conversation_history: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    def _prepare_messages(
+        self, request: ChatRequest, conversation_history: list[dict[str, str]]
+    ) -> list[dict[str, str]]:
         messages = []
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})
@@ -689,8 +804,8 @@ class OllamaProvider(BaseAIProvider):
     async def generate_response(
         self,
         request: ChatRequest,
-        conversation_history: List[Dict[str, str]],
-    ) -> Tuple[str, TokenUsage]:
+        conversation_history: list[dict[str, str]],
+    ) -> tuple[str, TokenUsage]:
         client = self._get_http_client()
         messages = self._prepare_messages(request, conversation_history)
         payload = {
@@ -698,7 +813,11 @@ class OllamaProvider(BaseAIProvider):
             "messages": messages,
             "stream": False,
             "options": {
-                "temperature": request.temperature if request.temperature is not None else self.settings.ai.temperature,
+                "temperature": (
+                    request.temperature
+                    if request.temperature is not None
+                    else self.settings.ai.temperature
+                ),
                 "num_predict": request.max_tokens or self.settings.ai.max_output_tokens,
             },
         }
@@ -706,7 +825,9 @@ class OllamaProvider(BaseAIProvider):
         try:
             res = await client.post("/api/chat", json=payload)
             if res.status_code != 200:
-                raise ProviderErrorException(self.provider_id, res.text, status_code=res.status_code)
+                raise ProviderErrorException(
+                    self.provider_id, res.text, status_code=res.status_code
+                )
 
             data = res.json()
             content = data.get("message", {}).get("content", "")
@@ -719,14 +840,16 @@ class OllamaProvider(BaseAIProvider):
             )
             return content, tokens
         except httpx.TimeoutException:
-            raise TimeoutException(self.provider_id, float(self.settings.ai.timeout_seconds))
+            raise TimeoutException(
+                self.provider_id, float(self.settings.ai.timeout_seconds)
+            )
         except httpx.RequestError as exc:
             raise NetworkErrorException(self.provider_id, str(exc))
 
     async def generate_stream(
         self,
         request: ChatRequest,
-        conversation_history: List[Dict[str, str]],
+        conversation_history: list[dict[str, str]],
     ) -> AsyncGenerator[str, None]:
         client = self._get_http_client()
         messages = self._prepare_messages(request, conversation_history)
@@ -735,7 +858,11 @@ class OllamaProvider(BaseAIProvider):
             "messages": messages,
             "stream": True,
             "options": {
-                "temperature": request.temperature if request.temperature is not None else self.settings.ai.temperature,
+                "temperature": (
+                    request.temperature
+                    if request.temperature is not None
+                    else self.settings.ai.temperature
+                ),
                 "num_predict": request.max_tokens or self.settings.ai.max_output_tokens,
             },
         }
@@ -744,7 +871,11 @@ class OllamaProvider(BaseAIProvider):
             async with client.stream("POST", "/api/chat", json=payload) as response:
                 if response.status_code != 200:
                     error_body = await response.aread()
-                    raise ProviderErrorException(self.provider_id, error_body.decode("utf-8"), response.status_code)
+                    raise ProviderErrorException(
+                        self.provider_id,
+                        error_body.decode("utf-8"),
+                        response.status_code,
+                    )
 
                 async for line in response.aiter_lines():
                     if line.strip():
@@ -756,11 +887,13 @@ class OllamaProvider(BaseAIProvider):
                         except json.JSONDecodeError:
                             continue
         except httpx.TimeoutException:
-            raise TimeoutException(self.provider_id, float(self.settings.ai.timeout_seconds))
+            raise TimeoutException(
+                self.provider_id, float(self.settings.ai.timeout_seconds)
+            )
         except httpx.RequestError as exc:
             raise NetworkErrorException(self.provider_id, str(exc))
 
-    async def check_health(self) -> Tuple[bool, Optional[float], str]:
+    async def check_health(self) -> tuple[bool, float | None, str]:
         start = time.perf_counter()
         try:
             client = self._get_http_client()
@@ -770,7 +903,7 @@ class OllamaProvider(BaseAIProvider):
                 return True, round(latency, 2), "Healthy"
             return False, None, f"Status code {res.status_code}"
         except Exception as exc:
-            return False, None, f"Ollama ping failed: {str(exc)}"
+            return False, None, f"Ollama ping failed: {exc!s}"
 
 
 # =============================================================================
@@ -781,8 +914,8 @@ class OllamaProvider(BaseAIProvider):
 class AIProviderFactory:
     """Factory for instantiating and caching singleton AI provider strategies."""
 
-    _instances: Dict[str, BaseAIProvider] = {}
-    _provider_map: Dict[str, Type[BaseAIProvider]] = {
+    _instances: dict[str, BaseAIProvider] = {}
+    _provider_map: dict[str, type[BaseAIProvider]] = {
         "gemini": GeminiProvider,
         "groq": GroqProvider,
         "openai": OpenAIProvider,
@@ -791,7 +924,9 @@ class AIProviderFactory:
     }
 
     @classmethod
-    def get_provider(cls, provider_id: Optional[str] = None, settings: Optional[Settings] = None) -> BaseAIProvider:
+    def get_provider(
+        cls, provider_id: str | None = None, settings: Settings | None = None
+    ) -> BaseAIProvider:
         """Get or initialize singleton instance of requested AI provider."""
         cfg = settings or get_settings()
         target_provider = (provider_id or cfg.ai.provider or "gemini").lower()
@@ -802,18 +937,22 @@ class AIProviderFactory:
         if target_provider not in cls._instances:
             provider_cls = cls._provider_map[target_provider]
             cls._instances[target_provider] = provider_cls(cfg)
-            logger.info("Initialized AI Provider singleton", extra={"provider": target_provider})
+            logger.info(
+                "Initialized AI Provider singleton", extra={"provider": target_provider}
+            )
 
         return cls._instances[target_provider]
 
     @classmethod
-    def get_all_providers_info(cls, settings: Optional[Settings] = None) -> List[ProviderInfo]:
+    def get_all_providers_info(
+        cls, settings: Settings | None = None
+    ) -> list[ProviderInfo]:
         """Enumerate information for all supported AI providers."""
         cfg = settings or get_settings()
         active_provider = cfg.ai.provider.lower()
         provider_infos = []
 
-        for pid in cls._provider_map.keys():
+        for pid in cls._provider_map:
             provider_inst = cls.get_provider(pid, cfg)
             provider_infos.append(
                 ProviderInfo(
@@ -835,16 +974,21 @@ class AIProviderFactory:
 class AIService:
     """Core AI Service orchestrating chat completion, streaming, and conversation memory."""
 
-    def __init__(self, settings: Optional[Settings] = None) -> None:
+    def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
 
-    async def _load_conversation_history(self, conversation_id: str) -> List[Dict[str, str]]:
+    async def _load_conversation_history(
+        self, conversation_id: str
+    ) -> list[dict[str, str]]:
         """Fetch past messages for a conversation ID from MongoDB."""
         try:
             db = get_database()
             doc = await db.conversations.find_one({"conversation_id": conversation_id})
             if doc and "messages" in doc:
-                return [{"role": m["role"], "content": m["content"]} for m in doc["messages"]]
+                return [
+                    {"role": m["role"], "content": m["content"]}
+                    for m in doc["messages"]
+                ]
         except Exception as exc:
             logger.warning(
                 "Failed to fetch conversation history from MongoDB",
@@ -902,15 +1046,19 @@ class AIService:
         # Retry loop for resiliency (Task 14)
         attempts = self.settings.ai.retry_attempts
         backoff = self.settings.ai.retry_backoff_seconds
-        last_exception: Optional[Exception] = None
+        last_exception: Exception | None = None
 
         for attempt in range(1, attempts + 1):
             try:
-                response_text, tokens = await provider.generate_response(request, history)
+                response_text, tokens = await provider.generate_response(
+                    request, history
+                )
                 execution_time = round(time.perf_counter() - start_time, 4)
 
                 # Persist to MongoDB memory (Task 10)
-                await self._save_conversation_messages(conversation_id, request.message, response_text)
+                await self._save_conversation_messages(
+                    conversation_id, request.message, response_text
+                )
 
                 logger.info(
                     "AI Chat Request Completed Successfully",
@@ -953,7 +1101,9 @@ class AIService:
         )
         if isinstance(last_exception, AIServiceException):
             raise last_exception
-        raise ProviderErrorException(provider.provider_id, str(last_exception or "Unknown error"))
+        raise ProviderErrorException(
+            provider.provider_id, str(last_exception or "Unknown error")
+        )
 
     async def chat_stream(self, request: ChatRequest) -> AsyncGenerator[str, None]:
         """Execute a streaming SSE AI completion request."""
@@ -970,7 +1120,7 @@ class AIService:
         )
 
         history = await self._load_conversation_history(conversation_id)
-        accumulated_response: List[str] = []
+        accumulated_response: list[str] = []
 
         try:
             async for chunk in provider.generate_stream(request, history):
@@ -979,14 +1129,16 @@ class AIService:
 
             full_text = "".join(accumulated_response)
             if full_text:
-                await self._save_conversation_messages(conversation_id, request.message, full_text)
+                await self._save_conversation_messages(
+                    conversation_id, request.message, full_text
+                )
         except Exception as exc:
             logger.error(
                 "AI Stream Request Failed",
                 extra={"provider": provider.provider_id, "error": str(exc)},
             )
             if isinstance(exc, AIServiceException):
-                raise exc
+                raise
             raise ProviderErrorException(provider.provider_id, str(exc))
 
     async def get_providers(self) -> ProvidersResponse:
@@ -1032,7 +1184,7 @@ class AIService:
 # Singleton Accessor (Task 15)
 # =============================================================================
 
-_ai_service_instance: Optional[AIService] = None
+_ai_service_instance: AIService | None = None
 
 
 def get_ai_service() -> AIService:

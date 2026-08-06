@@ -10,8 +10,9 @@ only a sanitised message is returned.
 from __future__ import annotations
 
 import traceback
+from collections.abc import Callable
 from http import HTTPStatus
-from typing import Any, Callable, Dict, Optional, Type, Union
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -42,7 +43,7 @@ LogLevel = Callable[..., None]  # logger.info, logger.warning, etc.
 ExceptionHandler = Callable[[Request, Exception], JSONResponse]
 
 
-def _get_request_id(request: Request) -> Optional[str]:
+def _get_request_id(request: Request) -> str | None:
     """Extract request ID from request.state (set by middleware) or headers."""
     request_id = getattr(request.state, "request_id", None)
     if request_id:
@@ -50,7 +51,7 @@ def _get_request_id(request: Request) -> Optional[str]:
     return request.headers.get(_settings.application.request_id_header)
 
 
-def _get_correlation_id(request: Request) -> Optional[str]:
+def _get_correlation_id(request: Request) -> str | None:
     """Extract correlation ID from request.state (set by middleware)."""
     return getattr(request.state, "correlation_id", None)
 
@@ -59,8 +60,8 @@ def _build_response(
     request: Request,
     http_status: int,
     error: str,
-    detail: Optional[Union[str, list[dict[str, object]]]] = None,
-    error_code: Optional[str] = None,
+    detail: str | list[dict[str, object]] | None = None,
+    error_code: str | None = None,
 ) -> JSONResponse:
     """Construct a standardised JSON error response, including traceback in debug."""
     response_detail = detail
@@ -88,8 +89,8 @@ def _handle_exception(
     status: HTTPStatus,
     log_level: LogLevel,
     error_message: str,
-    detail_func: Optional[Callable[[Exception], Any]] = None,
-    log_extra_func: Optional[Callable[[Request, Exception], Dict[str, Any]]] = None,
+    detail_func: Callable[[Exception], Any] | None = None,
+    log_extra_func: Callable[[Request, Exception], dict[str, Any]] | None = None,
 ) -> JSONResponse:
     """Generic handler for any exception with a given configuration."""
     request_id = _get_request_id(request)
@@ -122,7 +123,7 @@ def _handle_exception(
 
 # Configuration mapping: exception type -> (status, log_level, error_message, detail_func, log_extra_func)
 # Note: StarletteHTTPException is handled separately because status is dynamic.
-EXCEPTION_CONFIG: Dict[Type[Exception], tuple] = {
+EXCEPTION_CONFIG: dict[type[Exception], tuple] = {
     RequestValidationError: (
         HTTPStatus.UNPROCESSABLE_ENTITY,
         logger.warning,
@@ -187,7 +188,9 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     # Special handler for HTTPException (status code is dynamic)
     @app.exception_handler(StarletteHTTPException)
-    async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    async def http_exception_handler(
+        request: Request, exc: StarletteHTTPException
+    ) -> JSONResponse:
         return _handle_exception(
             request,
             exc,
@@ -203,8 +206,8 @@ def register_exception_handlers(app: FastAPI) -> None:
         status: HTTPStatus,
         log_level: LogLevel,
         error_message: str,
-        detail_func: Optional[Callable[[Exception], Any]],
-        log_extra_func: Optional[Callable[[Request, Exception], Dict[str, Any]]],
+        detail_func: Callable[[Exception], Any] | None,
+        log_extra_func: Callable[[Request, Exception], dict[str, Any]] | None,
     ) -> ExceptionHandler:
         async def handler(request: Request, exc: Exception) -> JSONResponse:
             return _handle_exception(
@@ -216,9 +219,16 @@ def register_exception_handlers(app: FastAPI) -> None:
                 detail_func=detail_func,
                 log_extra_func=log_extra_func,
             )
+
         return handler
 
-    for exc_type, (status, log_level, error_msg, detail_func, extra_func) in EXCEPTION_CONFIG.items():
+    for exc_type, (
+        status,
+        log_level,
+        error_msg,
+        detail_func,
+        extra_func,
+    ) in EXCEPTION_CONFIG.items():
         # StarletteHTTPException is already handled separately
         if exc_type is StarletteHTTPException:
             continue

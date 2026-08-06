@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Dict, Tuple
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
@@ -26,8 +25,8 @@ logger = logging.getLogger(__name__)
 # Configurable constants (can be moved to settings in the future)
 # ---------------------------------------------------------------------------
 
-RATE_LIMIT_REQUESTS: int = 100   # max requests per window
-RATE_LIMIT_WINDOW: int = 60       # window size in seconds
+RATE_LIMIT_REQUESTS: int = 100  # max requests per window
+RATE_LIMIT_WINDOW: int = 60  # window size in seconds
 
 _settings = get_settings()
 
@@ -44,7 +43,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._window: int = kwargs.get("window_seconds", RATE_LIMIT_WINDOW)
         self._limit: int = kwargs.get("max_requests", RATE_LIMIT_REQUESTS)
         # Internal state: ip -> (count, window_start)
-        self._counters: Dict[str, Tuple[int, float]] = {}
+        self._counters: dict[str, tuple[int, float]] = {}
         self._lock: asyncio.Lock = asyncio.Lock()
 
     @staticmethod
