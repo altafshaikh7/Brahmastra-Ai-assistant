@@ -1,5 +1,10 @@
 
 
+from fastapi.middleware.cors import CORSMiddleware
+
+from core.config import get_settings
+
+
 class cors_middleware(CORSMiddleware):
     """CORS middleware configured from Settings.cors.
 
