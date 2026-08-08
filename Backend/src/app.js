@@ -54,7 +54,7 @@ app.use("/api", speechRoutes); // exposes /api/speech-to-text and /api/text-to-s
 // 404 Route handler
 app.use((req, res, next) => {
   const error = new Error(`Not Found - ${req.originalUrl}`);
-  res.status(404);
+  error.statusCode = 404;
   next(error);
 });
 

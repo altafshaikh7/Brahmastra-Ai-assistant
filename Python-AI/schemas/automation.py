@@ -8,7 +8,13 @@ automation pipeline.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+try:
+    from datetime import UTC, datetime
+except ImportError:  # Python < 3.11
+    from datetime import datetime
+    from datetime import timezone as _tz
+
+    UTC = _tz.utc  # type: ignore[assignment]  # noqa: UP017
 from enum import Enum
 from typing import Any
 

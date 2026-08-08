@@ -9,7 +9,14 @@ import os
 import re
 import sys
 from contextvars import ContextVar
-from datetime import UTC, datetime
+
+try:
+    from datetime import UTC, datetime
+except ImportError:  # Python < 3.11
+    from datetime import datetime
+    from datetime import timezone as _tz
+
+    UTC = _tz.utc  # type: ignore[assignment]  # noqa: UP017
 from logging import Filter, Formatter, LogRecord
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 from pathlib import Path
@@ -151,9 +158,7 @@ class JsonFormatter(Formatter):
 
     def format(self, record: LogRecord) -> str:
         payload: dict[str, Any] = {
-            "timestamp": datetime.fromtimestamp(
-                record.created, tz=UTC
-            ).isoformat(),
+            "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "module": record.module,

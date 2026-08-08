@@ -93,16 +93,23 @@ const generateSpeech = async (text, voice = "alloy") => {
     logger.info(`[TTS] Split into ${chunks.length} chunk(s)`);
 
     const audioChunks = [];
-    for (let i = 0; i < chunks.length; i++) {
-      logger.info(`[TTS] Fetching chunk ${i + 1}/${chunks.length}: "${chunks[i].substring(0, 40)}..."`);
+    const chunkPromises = chunks.map(async (chunk, i) => {
+      logger.info(`[TTS] Fetching chunk ${i + 1}/${chunks.length}: "${chunk.substring(0, 40)}..."`);
       try {
-        const chunkBuf = await fetchGoogleTTSChunk(chunks[i]);
+        const chunkBuf = await fetchGoogleTTSChunk(chunk);
         if (chunkBuf.length > 100) {
-          audioChunks.push(chunkBuf);
+          return { index: i, buffer: chunkBuf };
         }
       } catch (chunkErr) {
         logger.warn(`[TTS] Chunk ${i + 1} failed: ${chunkErr.message} — skipping`);
       }
+      return { index: i, buffer: null };
+    });
+
+    const results = await Promise.all(chunkPromises);
+    results.sort((a, b) => a.index - b.index);
+    for (const res of results) {
+      if (res.buffer) audioChunks.push(res.buffer);
     }
 
     if (audioChunks.length === 0) {

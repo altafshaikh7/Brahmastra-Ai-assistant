@@ -416,7 +416,7 @@ class AISettings(BaseModel):
     azure_deployment: str | None = Field(default=None)
     azure_api_version: str | None = Field(default=None)
     anthropic_version: str | None = Field(default="2023-06-01")
-    gemini_model: str = Field(default="gemini-1.5-pro")
+    gemini_model: str = Field(default="gemini-2.5-flash")
     openrouter_model: str | None = Field(default=None)
 
     @field_validator("base_url", mode="before")
@@ -718,6 +718,13 @@ class Settings(BaseSettings):
     metrics: MetricsSettings = Field(default_factory=MetricsSettings)
     feature_flags: FeatureFlagSettings = Field(default_factory=FeatureFlagSettings)
     health: HealthCheckSettings = Field(default_factory=HealthCheckSettings)
+    # Tool configuration
+    tool_max_iterations: int = Field(
+        default=5, ge=1, description="Maximum tool call iterations per request."
+    )
+    tool_root_path: Path = Field(
+        default=PROJECT_ROOT, description="Root directory for tool file operations."
+    )
 
     @computed_field
     @property

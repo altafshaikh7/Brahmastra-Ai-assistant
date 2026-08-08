@@ -14,7 +14,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 
@@ -31,6 +31,9 @@ from schemas.chat import (
     ProvidersResponse,
     TokenUsage,
 )
+from schemas.tool import ToolExecutionRequest
+from services.executor import ToolExecutor
+from services.registry_service import ToolRegistryService
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -181,9 +184,8 @@ class GeminiProvider(BaseAIProvider):
         )
         self.supported_models = [
             "gemini-2.5-flash",
-            "gemini-1.5-pro",
-            "gemini-1.5-flash",
-            "gemini-2.0-flash-exp",
+            "gemini-2.5-pro",
+            "gemini-2.0-flash",
         ]
         self._client: Any | None = None
 
@@ -271,6 +273,17 @@ class GeminiProvider(BaseAIProvider):
             logger.error(
                 "Gemini API call failed", extra={"error": str(exc), "model": model_name}
             )
+            err_lower = str(exc).lower()
+            if (
+                "429" in err_lower
+                or "resource_exhausted" in err_lower
+                or "quota" in err_lower
+            ):
+                raise RateLimitException(self.provider_id, str(exc))
+            if "api_key" in err_lower or "unauthorized" in err_lower or "401" in err_lower:
+                raise APIKeyMissingException(self.provider_id)
+            if "not found" in err_lower or "404" in err_lower:
+                raise InvalidModelException(model_name, self.provider_id)
             raise ProviderErrorException(self.provider_id, str(exc))
 
     async def generate_stream(
@@ -914,8 +927,8 @@ class OllamaProvider(BaseAIProvider):
 class AIProviderFactory:
     """Factory for instantiating and caching singleton AI provider strategies."""
 
-    _instances: dict[str, BaseAIProvider] = {}
-    _provider_map: dict[str, type[BaseAIProvider]] = {
+    _instances: ClassVar[dict[str, BaseAIProvider]] = {}
+    _provider_map: ClassVar[dict[str, type[BaseAIProvider]]] = {
         "gemini": GeminiProvider,
         "groq": GroqProvider,
         "openai": OpenAIProvider,
@@ -1026,7 +1039,7 @@ class AIService:
             )
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
-        """Execute a non-streaming AI completion request with retries and logging."""
+        """Execute a non-streaming AI completion request with retries, logging, and tool orchestration."""
         start_time = time.perf_counter()
         provider = AIProviderFactory.get_provider(settings=self.settings)
         conversation_id = request.conversation_id or f"conv_{int(time.time() * 1000)}"
@@ -1043,66 +1056,162 @@ class AIService:
 
         history = await self._load_conversation_history(conversation_id)
 
-        # Retry loop for resiliency (Task 14)
-        attempts = self.settings.ai.retry_attempts
-        backoff = self.settings.ai.retry_backoff_seconds
-        last_exception: Exception | None = None
+        # Tool injection
+        registry_service = ToolRegistryService()
+        tools_list = registry_service.list_tools().tools
 
-        for attempt in range(1, attempts + 1):
-            try:
-                response_text, tokens = await provider.generate_response(
-                    request, history
-                )
+        orchestration_request = request.model_copy()
+
+        if tools_list:
+            tool_instructions = "You have access to the following tools:\n"
+            for t in tools_list:
+                tool_instructions += f"- {t.name}: {t.description}. Parameters: {t.model_dump().get('parameters', {})}\n"
+
+            tool_instructions += (
+                "\nIf you need to use a tool, you MUST respond ONLY with a JSON object in exactly this format:\n"
+                '{"tool_call": {"name": "tool_name", "arguments": {"arg1": "value1"}}}\n'
+                "Do NOT include any text outside this JSON block. "
+                "If you DO NOT need a tool, just respond normally with your final natural-language answer."
+            )
+
+            if orchestration_request.system_prompt:
+                orchestration_request.system_prompt += f"\n\n{tool_instructions}"
+            else:
+                orchestration_request.system_prompt = tool_instructions
+
+        attempts = max(1, self.settings.ai.retry_attempts)
+        backoff = max(0.0, self.settings.ai.retry_backoff_seconds)
+
+        MAX_TOOL_LOOPS = 5
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        final_response_text = ""
+
+        for loop_iteration in range(MAX_TOOL_LOOPS):
+            last_exception: Exception | None = None
+            response_text = ""
+            tokens = None
+
+            # Retry loop for the provider call
+            for attempt in range(1, attempts + 1):
+                try:
+                    response_text, tokens = await provider.generate_response(
+                        orchestration_request, history
+                    )
+                    break
+                except (
+                    RateLimitException,
+                    NetworkErrorException,
+                    TimeoutException,
+                ) as exc:
+                    last_exception = exc
+                    if attempt < attempts:
+                        await asyncio.sleep(backoff * (2 ** (attempt - 1)))
+                        continue
+                    break
+                except Exception as exc:
+                    last_exception = exc
+                    break
+
+            if last_exception and not response_text:
                 execution_time = round(time.perf_counter() - start_time, 4)
-
-                # Persist to MongoDB memory (Task 10)
-                await self._save_conversation_messages(
-                    conversation_id, request.message, response_text
+                logger.error(
+                    "AI Chat Request Failed", extra={"error": str(last_exception)}
                 )
+                if isinstance(last_exception, AIServiceException):
+                    raise last_exception
+                raise ProviderErrorException(provider.provider_id, str(last_exception))
 
-                logger.info(
-                    "AI Chat Request Completed Successfully",
-                    extra={
-                        "provider": provider.provider_id,
-                        "model": provider.default_model,
-                        "execution_time_seconds": execution_time,
-                        "total_tokens": tokens.total_tokens,
-                        "conversation_id": conversation_id,
-                    },
-                )
+            if tokens:
+                total_prompt_tokens += tokens.prompt_tokens
+                total_completion_tokens += tokens.completion_tokens
 
-                return ChatResponse(
-                    success=True,
-                    provider=provider.provider_id,
-                    model=provider.default_model,
-                    response=response_text,
-                    tokens=tokens,
-                    execution_time=execution_time,
-                    conversation_id=conversation_id,
-                )
-            except (RateLimitException, NetworkErrorException, TimeoutException) as exc:
-                last_exception = exc
-                if attempt < attempts:
-                    await asyncio.sleep(backoff * (2 ** (attempt - 1)))
-                    continue
+            # Check for tool call
+            parsed_tool_call = None
+            clean_text = response_text.strip()
+            # Remove markdown JSON block if present
+            if clean_text.startswith("```json"):
+                clean_text = clean_text[7:]
+            elif clean_text.startswith("```"):
+                clean_text = clean_text[3:]
+            clean_text = clean_text.removesuffix("```")
+            clean_text = clean_text.strip()
+
+            if clean_text.startswith("{") and "tool_call" in clean_text:
+                try:
+                    parsed = json.loads(clean_text)
+                    if isinstance(parsed, dict) and "tool_call" in parsed:
+                        parsed_tool_call = parsed["tool_call"]
+                except json.JSONDecodeError:
+                    pass
+
+            if not parsed_tool_call:
+                # No tool call, this is the final natural response
+                final_response_text = response_text
                 break
-            except Exception as exc:
-                last_exception = exc
-                break
+
+            # Execute the tool
+            tool_name = parsed_tool_call.get("name", "")
+            tool_args = parsed_tool_call.get("arguments", {})
+            logger.info(
+                "Executing tool %s",
+                tool_name,
+                extra={"tool_name": tool_name, "tool_arguments": str(tool_args)},
+            )
+
+            executor = ToolExecutor()
+            exec_req = ToolExecutionRequest(tool_name=tool_name, arguments=tool_args)
+            exec_res = executor.execute(exec_req)
+
+            tool_output_str = (
+                json.dumps(exec_res.output)
+                if not isinstance(exec_res.output, str)
+                else exec_res.output
+            )
+
+            # Append to history for the next iteration
+            history.append({"role": "assistant", "content": response_text})
+            history.append(
+                {
+                    "role": "user",
+                    "content": f"Tool '{tool_name}' returned: {tool_output_str}",
+                }
+            )
+
+        else:
+            # Reached MAX_TOOL_LOOPS
+            final_response_text = response_text
 
         execution_time = round(time.perf_counter() - start_time, 4)
-        logger.error(
-            "AI Chat Request Failed",
+
+        # Persist to MongoDB memory
+        await self._save_conversation_messages(
+            conversation_id, request.message, final_response_text
+        )
+
+        final_tokens = TokenUsage(
+            prompt_tokens=total_prompt_tokens,
+            completion_tokens=total_completion_tokens,
+            total_tokens=total_prompt_tokens + total_completion_tokens,
+        )
+
+        logger.info(
+            "AI Chat Request Completed Successfully",
             extra={
                 "provider": provider.provider_id,
                 "execution_time_seconds": execution_time,
-                "error": str(last_exception),
+                "total_tokens": final_tokens.total_tokens,
             },
         )
-        if isinstance(last_exception, AIServiceException):
-            raise last_exception
-        raise ProviderErrorException(
-            provider.provider_id, str(last_exception or "Unknown error")
+
+        return ChatResponse(
+            success=True,
+            provider=provider.provider_id,
+            model=provider.default_model,
+            response=final_response_text,
+            tokens=final_tokens,
+            execution_time=execution_time,
+            conversation_id=conversation_id,
         )
 
     async def chat_stream(self, request: ChatRequest) -> AsyncGenerator[str, None]:

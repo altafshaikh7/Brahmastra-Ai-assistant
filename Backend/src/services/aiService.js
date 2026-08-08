@@ -35,6 +35,7 @@ const transcribeAudio = async (fileBuffer, filename, mimeType) => {
   });
   formData.append("model", "whisper-large-v3");
   formData.append("temperature", "0");
+  formData.append("prompt", "Brahmastra. Hello, thank you. This is an English, Hindi and Urdu conversation.");
   formData.append("response_format", "json");
 
   try {

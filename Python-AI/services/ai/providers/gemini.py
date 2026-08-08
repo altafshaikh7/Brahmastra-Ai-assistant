@@ -20,6 +20,7 @@ from services.ai.exceptions import (
     InvalidModelException,
     NetworkErrorException,
     ProviderErrorException,
+    RateLimitException,
     TimeoutException,
 )
 from utils.logger import get_logger
@@ -43,17 +44,14 @@ class GeminiProvider(BaseAIProvider):
         super().__init__(settings)
         self.provider_id: str = "gemini"
         self.display_name: str = "Google Gemini"
-        self.default_model: str = getattr(settings.ai, "gemini_model", None) or (
-            settings.ai.model_name
-            if settings.ai.provider == "gemini"
-            else "gemini-2.5-flash"
+        # Use the configured Gemini model if provided; otherwise fall back to a known supported default.
+        self.default_model: str = (
+            getattr(settings.ai, "gemini_model", None) or "gemini-2.5-flash"
         )
         self.supported_models: list[str] = [
             "gemini-2.5-flash",
             "gemini-2.5-pro",
             "gemini-2.0-flash",
-            "gemini-1.5-pro",
-            "gemini-1.5-flash",
         ]
         self._client: Any | None = None
 
@@ -122,6 +120,12 @@ class GeminiProvider(BaseAIProvider):
             )
         elif "connection" in err_lower or "network" in err_lower or "dns" in err_lower:
             return NetworkErrorException(self.provider_id, err_msg)
+        elif (
+            "429" in err_lower
+            or "resource_exhausted" in err_lower
+            or "quota" in err_lower
+        ):
+            return RateLimitException(self.provider_id, err_msg)
 
         return ProviderErrorException(self.provider_id, err_msg)
 

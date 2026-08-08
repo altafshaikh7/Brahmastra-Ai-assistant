@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import traceback
 from collections.abc import Mapping
-from datetime import UTC, datetime
+
+try:
+    from datetime import UTC, datetime
+except ImportError:  # Python < 3.11
+    from datetime import datetime
+    from datetime import timezone as _tz
+
+    UTC = _tz.utc  # type: ignore[assignment]  # noqa: UP017
 from enum import Enum
 from typing import Any
 
@@ -237,9 +244,7 @@ class ErrorResponseModel(BaseModel):
     path: str = Field(default="")
     request_id: str = Field(default="")
     correlation_id: str | None = Field(default=None)
-    timestamp: str = Field(
-        default_factory=lambda: datetime.now(UTC).isoformat()
-    )
+    timestamp: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 def _get_request_id(request: Request) -> str:

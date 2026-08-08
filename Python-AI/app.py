@@ -31,6 +31,7 @@ from middleware.logging import logging_middleware
 from middleware.rate_limit import rate_limit_middleware
 from middleware.request_id import request_id_middleware
 from middleware.timing import timing_middleware
+from routers.ai import router as ai_router
 from routers.automation import router as automation_router
 
 # Routers -------------------------------------------------------------
@@ -58,6 +59,7 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
+        redirect_slashes=False,
     )
 
     # -----------------------------------------------------------------
@@ -81,6 +83,7 @@ def create_app() -> FastAPI:
     app.include_router(status_router, prefix="/status", tags=["Status"])
     app.include_router(tools_router, prefix="/tools", tags=["Tools"])
     app.include_router(automation_router, prefix="/automation", tags=["Automation"])
+    app.include_router(ai_router, prefix="/ai", tags=["AI"])
 
     return app
 

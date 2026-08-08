@@ -5,7 +5,14 @@ from __future__ import annotations
 import hmac
 import secrets
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from datetime import UTC, datetime, timedelta
+
+try:
+    from datetime import UTC, datetime, timedelta
+except ImportError:  # Python < 3.11
+    from datetime import datetime, timedelta
+    from datetime import timezone as _tz
+
+    UTC = _tz.utc  # type: ignore[assignment]  # noqa: UP017
 from enum import Enum
 from functools import wraps
 from typing import Annotated, Any

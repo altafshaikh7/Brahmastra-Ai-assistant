@@ -9,7 +9,14 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import UTC, datetime
+
+try:
+    from datetime import UTC, datetime
+except ImportError:  # Python < 3.11
+    from datetime import datetime
+    from datetime import timezone as _tz
+
+    UTC = _tz.utc  # type: ignore[assignment]  # noqa: UP017
 from time import perf_counter
 from typing import Annotated, Final, TypedDict
 
@@ -124,7 +131,13 @@ async def _initialize_client_with_retries() -> AsyncIOMotorClient:
             )
             await _ping_with_timeout(client, runtime_config.ping_timeout_seconds)
             return client
-        except (TimeoutError, pymongo.errors.ConnectionFailure, pymongo.errors.ServerSelectionTimeoutError, pymongo.errors.OperationFailure, pymongo.errors.ConfigurationError) as exc:
+        except (
+            TimeoutError,
+            pymongo.errors.ConnectionFailure,
+            pymongo.errors.ServerSelectionTimeoutError,
+            pymongo.errors.OperationFailure,
+            pymongo.errors.ConfigurationError,
+        ) as exc:
             last_error = exc
             if attempt == runtime_config.retry_attempts:
                 break
@@ -139,10 +152,14 @@ async def _initialize_client_with_retries() -> AsyncIOMotorClient:
 
     if isinstance(last_error, pymongo.errors.ConfigurationError):
         logger.exception("MongoDB configuration error during initialization.")
-        raise RuntimeError("MongoDB configuration is invalid.") from last_error  # noqa: TRY004
+        raise RuntimeError(  # noqa: TRY004
+            "MongoDB configuration is invalid."
+        ) from last_error
     if isinstance(last_error, asyncio.TimeoutError):
         logger.exception("MongoDB initialization timed out.")
-        raise RuntimeError("MongoDB initialization timed out.") from last_error  # noqa: TRY004
+        raise RuntimeError(  # noqa: TRY004
+            "MongoDB initialization timed out."
+        ) from last_error
     logger.exception(
         "MongoDB initialization failed after %d attempts.",
         runtime_config.retry_attempts,

@@ -21,6 +21,10 @@ export const textToSpeech = async (text, voice = "alloy") => {
   const blob = response.data;
   console.log(`[voiceApi] Received audio blob: ${blob.size}B, type=${blob.type}`);
 
+  if (blob.size < 100) {
+    throw new Error("TTS returned empty or invalid audio data");
+  }
+
   // Ensure it's typed as audio/mpeg for browser playback
   if (blob.type && blob.type !== "audio/mpeg") {
     return new Blob([blob], { type: "audio/mpeg" });
