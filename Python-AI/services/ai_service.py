@@ -12,6 +12,7 @@ from __future__ import annotations
 import abc
 import asyncio
 import json
+import re
 import time
 from collections.abc import AsyncGenerator
 from typing import Any, ClassVar
@@ -37,6 +38,56 @@ from services.registry_service import ToolRegistryService
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Matches common phrasings for live clock/date questions (not one exact sentence).
+_CURRENT_TIME_QUERY_RE = re.compile(
+    r"(?:"
+    r"\bwhat(?:'s|\s+is)\s+(?:the\s+)?(?:current\s+)?(?:time|date)(?:\s+and\s+time)?\b"
+    r"|\bwhat\s+time\s+is\s+it(?:\s+(?:right\s+now|now))?\b"
+    r"|\btell\s+me\s+(?:the\s+)?(?:current\s+)?(?:time|date)(?:\s+and\s+time)?\b"
+    r"|\b(?:current|today'?s?)\s+(?:time|date)(?:\s+and\s+time)?\b"
+    r"|\bwhat(?:'s|\s+is)\s+(?:the\s+)?time(?:\s+(?:right\s+now|now))?\b"
+    r"|\b(?:time|date)\s+(?:right\s+now|now)\b"
+    r"|\b(?:right\s+now|now)\b.*\b(?:time|date)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _is_current_time_query(message: str) -> bool:
+    """Return True when the user is asking for the live current time or date."""
+    return bool(_CURRENT_TIME_QUERY_RE.search(message.strip()))
+
+
+def _build_tool_instructions(tools_list: list[Any]) -> str:
+    """Build system-prompt instructions for available tools."""
+    lines = [
+        "You have access to the following tools:",
+    ]
+    for tool in tools_list:
+        lines.append(
+            f"- {tool.name}: {tool.description}. "
+            f"Parameters: {tool.model_dump().get('parameters', {})}"
+        )
+
+    lines.extend(
+        [
+            "",
+            "IMPORTANT tool-use rules:",
+            "- You do NOT have live clock or real-time access. Never guess the current time or date.",
+            (
+                "- For any question about the current time, date, clock, or 'what time is it', "
+                "you MUST call the current_time tool first."
+            ),
+            "- For calculations, use the calculator tool.",
+            "",
+            "If you need to use a tool, you MUST respond ONLY with a JSON object in exactly this format:",
+            '{"tool_call": {"name": "tool_name", "arguments": {"arg1": "value1"}}}',
+            "Do NOT include any text outside this JSON block.",
+            "If you DO NOT need a tool, respond normally with your final natural-language answer.",
+        ]
+    )
+    return "\n".join(lines)
 
 
 # =============================================================================
@@ -1064,16 +1115,7 @@ class AIService:
         orchestration_request = request.model_copy()
 
         if tools_list:
-            tool_instructions = "You have access to the following tools:\n"
-            for t in tools_list:
-                tool_instructions += f"- {t.name}: {t.description}. Parameters: {t.model_dump().get('parameters', {})}\n"
-
-            tool_instructions += (
-                "\nIf you need to use a tool, you MUST respond ONLY with a JSON object in exactly this format:\n"
-                '{"tool_call": {"name": "tool_name", "arguments": {"arg1": "value1"}}}\n'
-                "Do NOT include any text outside this JSON block. "
-                "If you DO NOT need a tool, just respond normally with your final natural-language answer."
-            )
+            tool_instructions = _build_tool_instructions(tools_list)
 
             if orchestration_request.system_prompt:
                 orchestration_request.system_prompt += f"\n\n{tool_instructions}"
@@ -1147,9 +1189,22 @@ class AIService:
                     pass
 
             if not parsed_tool_call:
-                # No tool call, this is the final natural response
-                final_response_text = response_text
-                break
+                has_current_time_tool = any(t.name == "current_time" for t in tools_list)
+                if (
+                    loop_iteration == 0
+                    and has_current_time_tool
+                    and _is_current_time_query(request.message)
+                ):
+                    parsed_tool_call = {"name": "current_time", "arguments": {}}
+                    response_text = json.dumps({"tool_call": parsed_tool_call})
+                    logger.info(
+                        "Forcing current_time tool for time-intent query",
+                        extra={"user_message": request.message},
+                    )
+                else:
+                    # No tool call, this is the final natural response
+                    final_response_text = response_text
+                    break
 
             # Execute the tool
             tool_name = parsed_tool_call.get("name", "")

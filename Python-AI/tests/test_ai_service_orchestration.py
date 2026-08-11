@@ -4,7 +4,7 @@ import pytest
 
 from schemas.chat import ChatRequest, TokenUsage
 from schemas.tool import ToolExecutionResponse
-from services.ai_service import AIService
+from services.ai_service import AIService, _is_current_time_query
 
 
 # Mock the database to prevent real DB connections during test
@@ -66,6 +66,70 @@ def mock_executor():
         executor_instance = MagicMock()
         mock_exec.return_value = executor_instance
         yield executor_instance
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "What time is it?",
+        "What is the current time?",
+        "What time is it right now?",
+        "Tell me the current date and time",
+        "What's the time now?",
+        "Current time please",
+    ],
+)
+def test_is_current_time_query(message: str):
+    assert _is_current_time_query(message) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Hello",
+        "Calculate 144 divided by 12",
+        "What is 2+2?",
+        "Tell me a joke",
+    ],
+)
+def test_is_not_current_time_query(message: str):
+    assert _is_current_time_query(message) is False
+
+
+@pytest.mark.asyncio
+async def test_current_time_forced_when_gemini_refuses(
+    mock_provider, mock_registry, mock_executor
+):
+    mock_provider.generate_response.side_effect = [
+        (
+            "I do not have access to real-time information.",
+            TokenUsage(prompt_tokens=10, completion_tokens=8, total_tokens=18),
+        ),
+        (
+            "It is currently 3:45 PM UTC.",
+            TokenUsage(prompt_tokens=20, completion_tokens=6, total_tokens=26),
+        ),
+    ]
+    mock_executor.execute.return_value = ToolExecutionResponse(
+        tool_name="current_time",
+        success=True,
+        output={
+            "utc": "2024-01-15T15:45:00+00:00",
+            "date": "2024-01-15",
+            "time": "15:45:00",
+        },
+        execution_time_ms=1.0,
+    )
+
+    service = AIService()
+    resp = await service.chat(ChatRequest(message="What time is it right now?"))
+
+    assert resp.response == "It is currently 3:45 PM UTC."
+    assert mock_executor.execute.call_count == 1
+    assert mock_executor.execute.call_args[0][0].tool_name == "current_time"
+    assert mock_provider.generate_response.call_count == 2
+    history_arg = mock_provider.generate_response.call_args_list[1][0][1]
+    assert "current_time" in history_arg[-1]["content"]
 
 
 @pytest.mark.asyncio

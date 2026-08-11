@@ -23,8 +23,10 @@ class CurrentTimeTool(BaseTool):
         name="current_time",
         display_name="Current Time",
         description=(
-            "Returns the current date and time in ISO-8601 format "
-            "(timezone-aware, UTC). Example output: '2024-01-15T10:30:00+00:00'."
+            "Returns the live current date and time from the system clock in ISO-8601 format "
+            "(timezone-aware, UTC). You MUST use this tool whenever the user asks what time it is, "
+            "the current date/time, today's date, or anything requiring real-time clock information. "
+            "Example output: '2024-01-15T10:30:00+00:00'."
         ),
         parameters=[],  # No parameters required.
         metadata=ToolMetadata(
