@@ -45,13 +45,15 @@ class GeminiProvider(BaseAIProvider):
         self.provider_id: str = "gemini"
         self.display_name: str = "Google Gemini"
         # Use the configured Gemini model if provided; otherwise fall back to a known supported default.
+        # gemini-2.5-flash is retired for new API keys; prefer the stable flash alias.
         self.default_model: str = (
-            getattr(settings.ai, "gemini_model", None) or "gemini-2.5-flash"
+            getattr(settings.ai, "gemini_model", None) or "gemini-flash-latest"
         )
         self.supported_models: list[str] = [
-            "gemini-2.5-flash",
-            "gemini-2.5-pro",
-            "gemini-2.0-flash",
+            "gemini-flash-latest",
+            "gemini-3.5-flash",
+            "gemini-3.6-flash",
+            "gemini-3-flash-preview",
         ]
         self._client: Any | None = None
 

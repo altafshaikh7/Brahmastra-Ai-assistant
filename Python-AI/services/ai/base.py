@@ -127,7 +127,7 @@ class BaseAIProvider(abc.ABC):
         elif self.default_model and self.default_model.strip():
             model = self.default_model.strip()
         else:
-            model = self.settings.ai.model_name or "gemini-2.5-flash"
+            model = self.settings.ai.model_name or "gemini-flash-latest"
 
         return model
 

@@ -416,7 +416,7 @@ class AISettings(BaseModel):
     azure_deployment: str | None = Field(default=None)
     azure_api_version: str | None = Field(default=None)
     anthropic_version: str | None = Field(default="2023-06-01")
-    gemini_model: str = Field(default="gemini-2.5-flash")
+    gemini_model: str = Field(default="gemini-flash-latest")
     openrouter_model: str | None = Field(default=None)
 
     @field_validator("base_url", mode="before")
