@@ -7,17 +7,6 @@ from schemas.tool import ToolExecutionResponse
 from services.ai_service import AIService, _is_current_time_query
 
 
-# Mock the database to prevent real DB connections during test
-@pytest.fixture(autouse=True)
-def mock_db():
-    with patch("services.ai_service.get_database") as mock_get_db:
-        mock_db_instance = MagicMock()
-        mock_db_instance.conversations.find_one = AsyncMock(return_value=None)
-        mock_db_instance.conversations.update_one = AsyncMock()
-        mock_get_db.return_value = mock_db_instance
-        yield mock_get_db
-
-
 @pytest.fixture
 def mock_provider():
     with patch("services.ai_service.AIProviderFactory.get_provider") as mock_get:
@@ -135,6 +124,25 @@ async def test_normal_chat(mock_provider, mock_registry):
     assert resp.response == "Hello world"
     assert resp.tokens.total_tokens == 15
     assert mock_provider.generate_response.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_uses_supplied_context(mock_provider, mock_registry):
+    mock_provider.generate_response.return_value = (
+        "Your name is Altaf.",
+        TokenUsage(),
+    )
+
+    service = AIService()
+    request = ChatRequest(
+        message="What is my name?",
+        conversation_id="conversation-1",
+        context=[{"role": "user", "content": "My name is Altaf."}],
+    )
+    await service.chat(request)
+
+    history = mock_provider.generate_response.call_args.args[1]
+    assert history == [{"role": "user", "content": "My name is Altaf."}]
 
 
 @pytest.mark.asyncio

@@ -22,6 +22,8 @@ const ConversationSchema = new mongoose.Schema({
   },
 });
 
+ConversationSchema.index({ userId: 1, updatedAt: -1 });
+
 ConversationSchema.pre("save", function(next) {
   this.updatedAt = Date.now();
   next();

@@ -21,7 +21,6 @@ import httpx
 
 from core.config import Settings, get_settings
 from core.exceptions import ApplicationError, ErrorCode
-from dependencies.database import get_database
 from schemas.chat import (
     AIHealthResponse,
     ChatRequest,
@@ -1170,54 +1169,6 @@ class AIService:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
 
-    async def _load_conversation_history(
-        self, conversation_id: str
-    ) -> list[dict[str, str]]:
-        """Fetch past messages for a conversation ID from MongoDB."""
-        try:
-            db = get_database()
-            doc = await db.conversations.find_one({"conversation_id": conversation_id})
-            if doc and "messages" in doc:
-                return [
-                    {"role": m["role"], "content": m["content"]}
-                    for m in doc["messages"]
-                ]
-        except Exception as exc:
-            logger.warning(
-                "Failed to fetch conversation history from MongoDB",
-                extra={"conversation_id": conversation_id, "error": str(exc)},
-            )
-        return []
-
-    async def _save_conversation_messages(
-        self,
-        conversation_id: str,
-        user_message: str,
-        assistant_message: str,
-    ) -> None:
-        """Persist new user and assistant messages into MongoDB conversation history."""
-        try:
-            db = get_database()
-            now = time.time()
-            new_msgs = [
-                {"role": "user", "content": user_message, "timestamp": now},
-                {"role": "assistant", "content": assistant_message, "timestamp": now},
-            ]
-            await db.conversations.update_one(
-                {"conversation_id": conversation_id},
-                {
-                    "$push": {"messages": {"$each": new_msgs}},
-                    "$setOnInsert": {"created_at": now},
-                    "$set": {"updated_at": now},
-                },
-                upsert=True,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Failed to save conversation message to MongoDB",
-                extra={"conversation_id": conversation_id, "error": str(exc)},
-            )
-
     async def chat(self, request: ChatRequest) -> ChatResponse:
         """Execute a non-streaming AI completion request with retries, logging, and tool orchestration."""
         start_time = time.perf_counter()
@@ -1234,7 +1185,10 @@ class AIService:
             },
         )
 
-        history = await self._load_conversation_history(conversation_id)
+        history = [
+            {"role": message.role, "content": message.content}
+            for message in request.context[-20:]
+        ]
 
         # Tool injection
         registry_service = ToolRegistryService()
@@ -1271,9 +1225,6 @@ class AIService:
                 )
 
             execution_time = round(time.perf_counter() - start_time, 4)
-            await self._save_conversation_messages(
-                conversation_id, request.message, final_response_text
-            )
             final_tokens = TokenUsage(
                 prompt_tokens=0,
                 completion_tokens=0,
@@ -1432,11 +1383,6 @@ class AIService:
 
         execution_time = round(time.perf_counter() - start_time, 4)
 
-        # Persist to MongoDB memory
-        await self._save_conversation_messages(
-            conversation_id, request.message, final_response_text
-        )
-
         final_tokens = TokenUsage(
             prompt_tokens=total_prompt_tokens,
             completion_tokens=total_completion_tokens,
@@ -1476,7 +1422,10 @@ class AIService:
             },
         )
 
-        history = await self._load_conversation_history(conversation_id)
+        history = [
+            {"role": message.role, "content": message.content}
+            for message in request.context[-20:]
+        ]
         accumulated_response: list[str] = []
 
         try:
@@ -1485,10 +1434,6 @@ class AIService:
                 yield chunk
 
             full_text = "".join(accumulated_response)
-            if full_text:
-                await self._save_conversation_messages(
-                    conversation_id, request.message, full_text
-                )
         except Exception as exc:
             logger.error(
                 "AI Stream Request Failed",

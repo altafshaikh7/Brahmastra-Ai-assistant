@@ -93,9 +93,42 @@ test("generateChatResponse forwards normal chat to Python-AI /ai/chat", async ()
     const answer = await generateChatResponse("What time is it now?");
     assert.equal(answer, "The current time is 10:30 PM.");
     assert.equal(capturedUrl, "http://localhost:8000/ai/chat");
-    assert.deepEqual(capturedPayload, { message: "What time is it now?" });
+    assert.deepEqual(capturedPayload, { message: "What time is it now?", context: [] });
     assert.equal(capturedOptions.headers["Content-Type"], "application/json");
     assert.equal(typeof capturedOptions.timeout, "number");
+  } finally {
+    axios.post = originalPost;
+  }
+});
+
+test("generateChatResponse forwards only the latest bounded conversation context", async () => {
+  const originalPost = axios.post;
+  let capturedPayload;
+  axios.post = async (_url, payload) => {
+    capturedPayload = payload;
+    return {
+      status: 200,
+      data: {
+        success: true,
+        provider: "gemini",
+        model: "gemini-flash-latest",
+        response: "ok",
+        tokens: {},
+        execution_time: 0.1,
+        conversation_id: "conv_123",
+      },
+    };
+  };
+
+  try {
+    const context = Array.from({ length: 25 }, (_, index) => ({
+      role: "user",
+      content: `message-${index}`,
+    }));
+    await generateChatResponse("latest", "conversation-1", context);
+    assert.equal(capturedPayload.context.length, 20);
+    assert.equal(capturedPayload.context[0].content, "message-5");
+    assert.equal(capturedPayload.conversation_id, "conversation-1");
   } finally {
     axios.post = originalPost;
   }

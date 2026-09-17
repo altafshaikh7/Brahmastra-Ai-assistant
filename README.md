@@ -11,7 +11,7 @@ React Frontend -> Node/Express -> Python/FastAPI -> Provider or Tool Registry
       +--------- TTS/STT responses   MongoDB memory
 ```
 
-The Node conversation ID is the canonical ID passed to Python as `conversation_id`. The Python service owns AI orchestration and tool execution; Node owns the browser-facing API and Mongo conversation records.
+Node is the canonical conversation persistence owner. It stores user-scoped conversations and messages in MongoDB using `role`, `content`, and timestamps. Each request sends the same `conversationId` to Python as `conversation_id`, plus at most the latest 20 persisted messages as `context`. Python performs orchestration, provider calls, and tool execution but does not persist a competing conversation history.
 
 ## Prerequisites
 

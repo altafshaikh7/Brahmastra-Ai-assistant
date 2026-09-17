@@ -184,7 +184,8 @@ class TestToolsRouter:
             "tool_name": "echo",
             "arguments": {"message": "hello api"},
         }
-        resp = client.post("/tools/execute", json=payload)
+        headers = {"X-Internal-API-Key": "internal_secret_key_123_456_789_000"}
+        resp = client.post("/tools/execute", json=payload, headers=headers)
         assert resp.status_code == 200
         data = resp.json()
         assert data["tool_name"] == "echo"
@@ -196,7 +197,8 @@ class TestToolsRouter:
             "tool_name": "unknown_tool",
             "arguments": {},
         }
-        resp = client.post("/tools/execute", json=payload)
+        headers = {"X-Internal-API-Key": "internal_secret_key_123_456_789_000"}
+        resp = client.post("/tools/execute", json=payload, headers=headers)
         assert resp.status_code == 200
         data = resp.json()
         assert data["success"] is False

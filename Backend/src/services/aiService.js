@@ -85,8 +85,12 @@ const mapPythonAiError = (error) => {
       path: "/ai/chat",
     });
 
-    if (status >= 500 || status === 429 || status === 503) {
+    if (status >= 500 || status === 503) {
       return new PythonAiError(PYTHON_AI_UNAVAILABLE_MSG, 503);
+    }
+    
+    if (status === 429) {
+      return new PythonAiError("Rate limit exceeded.", 429);
     }
 
     const detail = error.response.data?.detail;
@@ -171,10 +175,12 @@ const transcribeAudio = async (fileBuffer, filename, mimeType) => {
 /**
  * Generate chat response via Python-AI orchestration layer.
  * @param {string|Array<{role: string, content: string}>} messages - User query or OpenAI-format history
- * @param {string|null} [conversationId] - Optional Python-AI conversation id
+ * @param {string|null} [conversationId] - Canonical Node conversation id
+ * @param {Array<{role: string, content: string}>} [context] - Bounded Node-owned context
+ * @param {string|null} [userToken] - Authenticated user JWT (forwarded for memory/RAG retrieval)
  * @returns {Promise<string>} AI reply text
  */
-const generateChatResponse = async (messages, conversationId = null) => {
+const generateChatResponse = async (messages, conversationId = null, context = [], userToken = null) => {
   const userMessage = extractUserMessage(messages);
   if (!userMessage) {
     throw new Error("User message is required");
@@ -184,11 +190,19 @@ const generateChatResponse = async (messages, conversationId = null) => {
     pythonAiUrl: PYTHON_AI_URL,
     messageLength: userMessage.length,
     hasConversationId: Boolean(conversationId),
+    hasUserToken: Boolean(userToken),
   });
 
-  const payload = { message: userMessage };
+  const payload = {
+    message: userMessage,
+    context: Array.isArray(context) ? context.slice(-20) : [],
+  };
   if (conversationId) {
     payload.conversation_id = conversationId;
+  }
+  // Forward user token so Agent Brain can call Node memory/document APIs
+  if (userToken) {
+    payload.user_token = userToken;
   }
 
   try {

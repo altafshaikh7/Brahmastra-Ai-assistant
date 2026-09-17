@@ -57,6 +57,11 @@ class ChatRequest(BaseModel):
         description="Optional unique identifier for persisting and linking conversation context.",
         examples=["conv_9f8a7b6c5d"],
     )
+    context: list[ChatMessage] = Field(
+        default_factory=list,
+        max_length=20,
+        description="Bounded canonical conversation context supplied by Node.",
+    )
     system_prompt: str | None = Field(
         default=None,
         description="Optional instructions to guide model behavior and personality.",

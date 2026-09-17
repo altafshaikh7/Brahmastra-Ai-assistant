@@ -2,6 +2,7 @@ const express = require("express");
 const multer = require("multer");
 const speechController = require("../controllers/speechController");
 const { speechLimiter } = require("../middleware/rateLimiter");
+const { protect } = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
@@ -12,7 +13,7 @@ const upload = multer({
   },
 });
 
-router.post("/speech-to-text", speechLimiter, upload.single("audio"), speechController.postSpeechToText);
-router.post("/text-to-speech", speechLimiter, speechController.postTextToSpeech);
+router.post("/speech-to-text", protect, speechLimiter, upload.single("audio"), speechController.postSpeechToText);
+router.post("/text-to-speech", protect, speechLimiter, speechController.postTextToSpeech);
 
 module.exports = router;
