@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 
 export default function About() {
     const [counters, setCounters] = useState({
@@ -10,7 +10,7 @@ export default function About() {
 
     // Animated counter effect
     useEffect(() => {
-        const animateCounter = (key, target, suffix = '') => {
+        const animateCounter = (key, target) => {
             let start = 0;
             const duration = 2000;
             const step = (timestamp) => {

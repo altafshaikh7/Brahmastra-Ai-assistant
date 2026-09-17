@@ -1,4 +1,3 @@
-import React from 'react';
 import AnimatedBlob from '../component/AnimatedBlob';
 
 export default function Home({ blobSettings, setBlobSettings }) {

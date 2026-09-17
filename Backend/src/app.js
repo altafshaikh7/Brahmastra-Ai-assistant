@@ -19,11 +19,15 @@ const app = express();
 // Security Middlewares
 app.use(helmet());
 app.use(compression());
-app.use(cors());
+const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:5173")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+app.use(cors({ origin: allowedOrigins }));
 
 // Body Parsers
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
 // HTTP request logging mapped to Winston stream
 const morganFormat = process.env.NODE_ENV === "production" ? "combined" : "dev";

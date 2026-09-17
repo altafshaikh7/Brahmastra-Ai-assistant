@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Python environments and caches
+.venv/
+.venv310/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+
+# Frontend/build output
+dist/
+build/
+coverage/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Runtime output
+logs/
+*.log
+*.pid
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState, useCallback } from "react";
-import { transcribeAudio } from "../services/speechApi";
+import { useEffect, useRef, useState } from "react";
 import { sendChatMessage } from "../services/chatApi";
+import { transcribeAudio } from "../services/speechApi";
 import { textToSpeech } from "../services/voiceApi";
 
 const getSupportedMimeType = () => {
@@ -10,300 +10,215 @@ const getSupportedMimeType = () => {
     "audio/ogg;codecs=opus",
     "audio/ogg",
     "audio/mp4",
-    "", // browser default
+    "",
   ];
-  for (const mime of candidates) {
-    if (mime === "" || MediaRecorder.isTypeSupported(mime)) {
-      console.log(`[MediaRecorder Probe] Selected MIME: "${mime || 'default'}"`);
-      return mime;
-    }
-  }
-  return "";
+  return candidates.find((mime) => mime === "" || MediaRecorder.isTypeSupported(mime)) || "";
 };
 
 const SpeechTerminal = ({ onStateChange }) => {
-  const [text, setText] = useState("");
-  const [aiText, setAiText] = useState("");
-  const [status, setStatus] = useState("Ready");
-  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [mode, setMode] = useState("talk");
+  const [status, setStatus] = useState("READY");
+  const [userInput, setUserInput] = useState("");
+  const [aiResponse, setAiResponse] = useState("");
+  const [chatInput, setChatInput] = useState("");
+  const [messages, setMessages] = useState([]);
   const [isRecording, setIsRecording] = useState(false);
+  const [isChatLoading, setIsChatLoading] = useState(false);
 
-  const typingTimerRef = useRef(null);
-  const mediaRecorderRef   = useRef(null);
-  const chunksRef          = useRef([]);
-  const streamRef          = useRef(null);
-  const conversationIdRef  = useRef(null);
-  const audioPlayerRef     = useRef(null);
-  const recordStartRef     = useRef(0);
-  const supportedMimeRef   = useRef("");
+  const mediaRecorderRef = useRef(null);
+  const chunksRef = useRef([]);
+  const streamRef = useRef(null);
+  const conversationIdRef = useRef(null);
+  const audioPlayerRef = useRef(null);
+  const supportedMimeRef = useRef("");
+  const messagesEndRef = useRef(null);
 
-  const updateGlobalState = useCallback((updates) => {
-    if (onStateChange) onStateChange(updates);
-  }, [onStateChange]);
-
-  // Init MIME
   useEffect(() => {
     supportedMimeRef.current = getSupportedMimeType();
+    return () => {
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      audioPlayerRef.current?.pause();
+    };
   }, []);
 
-  // ─── RECORDING CONTROLS ───
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isChatLoading]);
+
+  const updateStatus = (nextStatus) => {
+    setStatus(nextStatus);
+    onStateChange?.({ statusText: nextStatus, isProcessing: nextStatus !== "READY" });
+  };
+
+  const handleChatResult = (query, result) => {
+    conversationIdRef.current = result.conversationId;
+    setMessages((current) => [
+      ...current,
+      { role: "user", content: query },
+      { role: "assistant", content: result.answer },
+    ]);
+    setUserInput(query);
+    setAiResponse(result.answer);
+  };
+
+  const submitChat = async (event) => {
+    event?.preventDefault();
+    const query = chatInput.trim();
+    if (!query || isChatLoading) return;
+
+    setChatInput("");
+    setIsChatLoading(true);
+    updateStatus("PROCESSING");
+    try {
+      updateStatus("THINKING");
+      const result = await sendChatMessage(query, conversationIdRef.current);
+      handleChatResult(query, result);
+      updateStatus("RESPONDING");
+      updateStatus("READY");
+    } catch (error) {
+      setMessages((current) => [
+        ...current,
+        { role: "user", content: query },
+        { role: "system", content: error.response?.data?.message || "The assistant is unavailable." },
+      ]);
+      updateStatus("ERROR");
+    } finally {
+      setIsChatLoading(false);
+    }
+  };
 
   const startRecording = async () => {
-    console.log("[startRecording] Invoked. Requesting microphone access...");
-    
-    // Stop TTS playback if playing
-    if (audioPlayerRef.current) {
-      audioPlayerRef.current.pause();
-      audioPlayerRef.current.src = "";
-    }
-
-    setAiText("");
-    setText("Listening... (Click again to stop)");
-    setStatus("Listening...");
-    setIsRecording(true);
-    updateGlobalState({ micStatus: "ACTIVE", status: "Listening..." });
-
-    try {
-      if (!streamRef.current) {
-        console.log("[startRecording] Requesting getUserMedia...");
-        streamRef.current = await navigator.mediaDevices.getUserMedia({
-          audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true }
-        });
-        console.log("[startRecording] Microphone permission granted.");
-      }
-
-      const stream = streamRef.current;
-      const opts = supportedMimeRef.current ? { mimeType: supportedMimeRef.current } : {};
-      
-      console.log(`[startRecording] Creating MediaRecorder with options:`, opts);
-      const mr = new MediaRecorder(stream, opts);
-      mediaRecorderRef.current = mr;
-      chunksRef.current = [];
-      recordStartRef.current = Date.now();
-
-      mr.onstart = () => {
-        console.log(`[MediaRecorder.onstart] Recording started. MIME: "${mr.mimeType}"`);
-      };
-
-      mr.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) {
-          chunksRef.current.push(e.data);
-          console.log(`[MediaRecorder.ondataavailable] Chunk size: ${e.data.size} bytes, Total chunks: ${chunksRef.current.length}`);
-        }
-      };
-
-      mr.onerror = (err) => {
-        console.error("[MediaRecorder.onerror] Error:", err);
-      };
-
-      mr.onstop = () => {
-        console.log("[MediaRecorder.onstop] Fired.");
-        handleRecordingStop();
-      };
-
-      console.log("[startRecording] Calling mr.start(250)...");
-      mr.start(250);
-
-    } catch (err) {
-      console.error("[startRecording] Error initializing microphone or recorder:", err);
-      setIsRecording(false);
-      setStatus("Mic Error");
-      setText("Microphone access denied or failed.");
-    }
-  };
-
-  const stopRecording = () => {
-    console.log("[stopRecording] Invoked.");
-    setIsRecording(false);
-    
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      console.log("[stopRecording] Calling mediaRecorder.stop()...");
-      mediaRecorderRef.current.stop();
-    } else {
-      console.warn("[stopRecording] MediaRecorder is already inactive or null.");
-    }
-  };
-
-  const handleRecordingStop = async () => {
-    console.log("[handleRecordingStop] Invoked.");
-    
-    const durationMs = Date.now() - recordStartRef.current;
-    const mimeType = mediaRecorderRef.current?.mimeType || supportedMimeRef.current || "audio/webm";
-    const blob = new Blob(chunksRef.current, { type: mimeType });
-
-    console.log(`[handleRecordingStop] Blob compiled. Size: ${blob.size} bytes, Duration: ${durationMs}ms, MIME: "${mimeType}"`);
-
-    if (blob.size === 0) {
-      console.error("[handleRecordingStop] ERROR: Blob size is 0 bytes! Microphone may be muted or blocked.");
-      setStatus("Error");
-      setText("Recording failed: 0 bytes recorded.");
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
       return;
     }
 
-    if (durationMs < 300) {
-      console.warn("[handleRecordingStop] Warning: Recording extremely short (<300ms).");
-    }
-
-    await runPipeline(blob, mimeType);
-  };
-
-  // ─── CLICK HANDLER ───
-
-  const handleCardClick = () => {
-    console.log(`[handleCardClick] Invoked. Current state isRecording = ${isRecording}`);
-    if (isRecording) {
-      stopRecording();
-    } else {
-      startRecording();
-    }
-  };
-
-  // ─── PIPELINE ───
-
-  const runPipeline = async (audioBlob, mimeType) => {
-    console.log("[runPipeline] Invoked. Starting pipeline sequence...");
-    setStatus("Transcribing...");
-    setText("Uploading audio to backend...");
-    updateGlobalState({ status: "Transcribing..." });
+    audioPlayerRef.current?.pause();
+    setAiResponse("");
+    setUserInput("");
+    setIsRecording(true);
+    updateStatus("LISTENING");
 
     try {
-      // 1. STT
-      console.log(`[runPipeline] Calling transcribeAudio() -> POST /api/speech-to-text`);
-      const transcript = await transcribeAudio(audioBlob, mimeType);
-      console.log(`[runPipeline] transcribeAudio() resolved. Transcript: "${transcript}"`);
-
-      if (!transcript || transcript.trim().length === 0) {
-        throw new Error("STT returned an empty transcript.");
+      if (!streamRef.current) {
+        streamRef.current = await navigator.mediaDevices.getUserMedia({
+          audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true },
+        });
       }
 
-      setText(transcript.trim());
-      setStatus("Thinking...");
-      updateGlobalState({ status: "Thinking..." });
-
-      // 2. Chat
-      console.log(`[runPipeline] Calling sendChatMessage() -> POST /api/chat`);
-      const chatData = await sendChatMessage(transcript.trim(), conversationIdRef.current);
-      conversationIdRef.current = chatData.conversationId;
-      const answer = chatData.answer;
-      console.log(`[runPipeline] sendChatMessage() resolved. Answer: "${answer}"`);
-
-      // 3. TTS
-      setStatus("Speaking...");
-      updateGlobalState({ status: "Speaking..." });
-
-      console.log(`[runPipeline] Calling textToSpeech() -> POST /api/text-to-speech`);
-      const voiceBlob = await textToSpeech(answer.trim());
-      console.log(`[runPipeline] textToSpeech() resolved. MP3 Blob size: ${voiceBlob.size} bytes`);
-
-      playAudio(answer.trim(), voiceBlob);
-
-    } catch (err) {
-      console.error("[runPipeline] Pipeline Error:", err.message || err);
-      setStatus("Ready");
-      setText(`Error: ${err.message || "Pipeline failed"}`);
-      updateGlobalState({ status: "Ready" });
+      const recorder = new MediaRecorder(
+        streamRef.current,
+        supportedMimeRef.current ? { mimeType: supportedMimeRef.current } : undefined,
+      );
+      mediaRecorderRef.current = recorder;
+      chunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunksRef.current.push(event.data);
+      };
+      recorder.onstop = async () => {
+        setIsRecording(false);
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        await runVoicePipeline(blob, recorder.mimeType || "audio/webm");
+      };
+      recorder.start(250);
+    } catch (error) {
+      setIsRecording(false);
+      setUserInput(error.message || "Microphone access failed.");
+      updateStatus("ERROR");
     }
   };
 
-  const playAudio = (answerText, audioBlob) => {
-    console.log("[playAudio] Invoked. Setting up HTMLAudioElement...");
-    const audioUrl = URL.createObjectURL(audioBlob);
-    const audio = new Audio(audioUrl);
-    audioPlayerRef.current = audio;
+  const runVoicePipeline = async (audioBlob, mimeType) => {
+    try {
+      updateStatus("TRANSCRIBING");
+      const transcript = (await transcribeAudio(audioBlob, mimeType)).trim();
+      if (!transcript) throw new Error("Speech-to-text returned no transcript.");
+      setUserInput(transcript);
 
-    audio.onplay = () => {
-      console.log("[Audio] Playback started.");
-      setIsSpeaking(true);
-      updateGlobalState({ isSpeaking: true, status: "Speaking..." });
-    };
+      updateStatus("PROCESSING");
+      updateStatus("THINKING");
+      const result = await sendChatMessage(transcript, conversationIdRef.current);
+      conversationIdRef.current = result.conversationId;
+      setAiResponse(result.answer);
+      setMessages((current) => [
+        ...current,
+        { role: "user", content: transcript },
+        { role: "assistant", content: result.answer },
+      ]);
 
-    audio.onended = () => {
-      console.log("[Audio] Playback finished.");
-      setIsSpeaking(false);
-      setStatus("Ready");
-      updateGlobalState({ isSpeaking: false, status: "Ready" });
-      URL.revokeObjectURL(audioUrl);
-      setTimeout(() => {
-        setAiText("");
-        setText("");
-      }, 5000);
-    };
-
-    audio.onerror = (e) => {
-      console.error("[Audio] Playback error:", e);
-    };
-
-    console.log("[playAudio] Calling audio.play()...");
-    audio.play().catch((err) => {
-      console.error("[Audio] Autoplay blocked or failed:", err);
-      setIsSpeaking(true);
-      setTimeout(() => audio.onended(), answerText.length * 50);
-    });
-
-    setAiText("");
-    let i = 0;
-    if (typingTimerRef.current) clearInterval(typingTimerRef.current);
-    typingTimerRef.current = setInterval(() => {
-      i++;
-      setAiText(answerText.substring(0, i));
-      if (i >= answerText.length) clearInterval(typingTimerRef.current);
-    }, 20);
+      updateStatus("RESPONDING");
+      const audioBlobResponse = await textToSpeech(result.answer.trim());
+      const audioUrl = URL.createObjectURL(audioBlobResponse);
+      const audio = new Audio(audioUrl);
+      audioPlayerRef.current = audio;
+      audio.onplay = () => onStateChange?.({ isSpeaking: true });
+      audio.onended = () => {
+        onStateChange?.({ isSpeaking: false });
+        URL.revokeObjectURL(audioUrl);
+        updateStatus("READY");
+      };
+      await audio.play();
+    } catch (error) {
+      setUserInput(error.message || "Voice pipeline failed.");
+      updateStatus("ERROR");
+    }
   };
 
-  // ─── RENDER ───
+  const renderChatHistory = () => (
+    <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1 text-left text-xs font-mono">
+      {messages.length === 0 && <p className="text-cyan-100/45">No messages in this conversation.</p>}
+      {messages.map((message, index) => (
+        <div key={`${message.role}-${index}`} className="border-b border-white/5 pb-2">
+          <span className={message.role === "user" ? "text-cyan-300" : "text-purple-300"}>
+            {message.role === "user" ? "USER" : message.role === "assistant" ? "BRAHMĀSTRA" : "SYSTEM"}
+          </span>
+          <p className="mt-1 whitespace-pre-wrap text-white/85">{message.content}</p>
+        </div>
+      ))}
+      {isChatLoading && <p className="text-cyan-300">BRAHMĀSTRA: THINKING...</p>}
+      <div ref={messagesEndRef} />
+    </div>
+  );
 
   return (
     <div className="fixed bottom-3 left-0 right-0 z-50 flex justify-center px-4">
-      <div
-        onClick={handleCardClick}
-        className="
-          relative w-full max-w-xl overflow-hidden bg-black/80 backdrop-blur-2xl 
-          border border-cyan-400/50 shadow-[0_0_50px_rgba(0,255,255,0.2)] 
-          transition-all duration-300 cursor-pointer hover:border-cyan-400
-        "
-        style={{ clipPath: "polygon(5% 0%, 100% 0%, 100% 75%, 95% 100%, 0% 100%, 0% 25%)" }}
-      >
-        <div className="absolute inset-0 opacity-20 bg-gradient-to-br from-cyan-500 via-transparent to-purple-500" />
-        
-        {isRecording && (
-          <div className="absolute inset-0 border-2 border-red-500 animate-pulse pointer-events-none" />
-        )}
+      <section className="relative flex max-h-[min(72vh,620px)] w-full max-w-2xl flex-col overflow-hidden border border-cyan-400/50 bg-black/85 shadow-[0_0_50px_rgba(0,255,255,0.2)] backdrop-blur-2xl [clip-path:polygon(3%_0%,100%_0%,100%_88%,97%_100%,0%_100%,0%_12%)]">
+        <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/10 via-transparent to-purple-500/10" />
+        <div className="relative z-10 flex min-h-0 flex-1 flex-col px-5 py-4 sm:px-7">
+          <header className="flex items-center justify-between border-b border-cyan-400/20 pb-3">
+            <span className="font-mono text-xs font-bold tracking-[0.28em] text-cyan-300">BRAHMĀSTRA AI</span>
+            <span className="font-mono text-[10px] tracking-[0.2em] text-cyan-200">{status}</span>
+          </header>
 
-        <div className="relative z-10 px-5 py-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex flex-col">
-              <span className="text-cyan-300 text-[12px] tracking-[4px] uppercase font-bold font-mono">
-                {isRecording ? "🔴 RECORDING ACTIVE" : "Brahmastra AI"}
-              </span>
-            </div>
-            <div className="flex items-center gap-2 bg-cyan-950/40 px-2 py-1 rounded border border-cyan-400/20">
-              <span className="text-[10px] uppercase font-mono text-cyan-200">
-                {status}
-              </span>
-            </div>
+          <div className="flex justify-center gap-8 py-3 font-mono text-xs">
+            <button type="button" onClick={() => setMode("talk")} className={mode === "talk" ? "text-cyan-300" : "text-white/45"}>
+              🎙️ TALK {mode === "talk" && <span className="ml-1">[ACTIVE]</span>}
+            </button>
+            <button type="button" onClick={() => setMode("chat")} className={mode === "chat" ? "text-cyan-300" : "text-white/45"}>
+              💬 CHAT {mode === "chat" && <span className="ml-1">[ACTIVE]</span>}
+            </button>
           </div>
 
-          <div className="h-[65px] flex flex-col justify-center">
-            {aiText ? (
-              <div className="flex flex-col gap-1">
-                <span className="text-purple-400 font-mono text-[10px]">BRAHMASTRA AI:</span>
-                <p className="text-white font-mono text-[14px] leading-tight">{aiText}</p>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-1">
-                <span className="text-cyan-500 font-mono text-[10px]">USER_INPUT:</span>
-                <p className={`font-mono text-[14px] ${isRecording ? "text-red-400 font-bold" : "text-cyan-50"}`}>
-                  {text || (
-                    <span className="opacity-50">
-                      [ CLICK HERE TO START RECORDING ]
-                    </span>
-                  )}
-                </p>
-              </div>
-            )}
-          </div>
+          {mode === "chat" ? (
+            <>
+              {renderChatHistory()}
+              <form onSubmit={submitChat} className="mt-3 flex gap-2 border-t border-cyan-400/20 pt-3">
+                <input value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder="Ask Brahmastra anything..." disabled={isChatLoading} className="min-w-0 flex-1 rounded border border-white/15 bg-white/5 px-3 py-2 font-mono text-xs text-white outline-none focus:border-cyan-400" />
+                <button type="submit" disabled={isChatLoading || !chatInput.trim()} className="rounded border border-cyan-400/60 px-4 py-2 font-mono text-xs text-cyan-200 disabled:opacity-40">Send</button>
+              </form>
+            </>
+          ) : (
+            <div className="space-y-3 font-mono text-xs">
+              <div><span className="text-cyan-500">USER_INPUT:</span><p className="mt-1 min-h-5 whitespace-pre-wrap text-cyan-50">{userInput || "[ CLICK TO START RECORDING ]"}</p></div>
+              <div><span className="text-cyan-500">AI_CORE:</span><p className="mt-1 text-cyan-200">{status}</p></div>
+              <div><span className="text-purple-400">AI_RESPONSE:</span><p className="mt-1 min-h-5 whitespace-pre-wrap text-white">{aiResponse || "READY"}</p></div>
+              <button type="button" onClick={startRecording} className={`w-full border px-4 py-3 text-xs tracking-[0.18em] ${isRecording ? "border-red-400 text-red-300" : "border-cyan-400/50 text-cyan-200"}`}>
+                {isRecording ? "🔴 STOP RECORDING" : "🎙️ START RECORDING"}
+              </button>
+            </div>
+          )}
         </div>
-      </div>
+      </section>
     </div>
   );
 };

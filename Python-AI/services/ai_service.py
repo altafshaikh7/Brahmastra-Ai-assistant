@@ -59,6 +59,115 @@ def _is_current_time_query(message: str) -> bool:
     return bool(_CURRENT_TIME_QUERY_RE.search(message.strip()))
 
 
+def _extract_calculator_expression(message: str) -> str | None:
+    """Extract a simple arithmetic expression from an explicit calculator request."""
+    if not re.search(r"\b(calculate|calculator)\b", message, re.IGNORECASE):
+        return None
+
+    expr = re.sub(r"(?i)^.*?\bcalculate\b", "", message, count=1)
+    expr = re.sub(r"(?i)\busing\s+(?:the\s+)?calculator\s+tool\b.*$", "", expr)
+    expr = re.sub(r"(?i)\bwith\s+(?:the\s+)?calculator\s+tool\b.*$", "", expr)
+    replacements = {
+        r"\bdivided\s+by\b": "/",
+        r"\bmultiplied\s+by\b": "*",
+        r"\btimes\b": "*",
+        r"\bplus\b": "+",
+        r"\bminus\b": "-",
+    }
+    for pattern, replacement in replacements.items():
+        expr = re.sub(pattern, replacement, expr, flags=re.IGNORECASE)
+
+    expr = re.sub(r"[^0-9+\-*/().% ]", "", expr).strip()
+    return expr or None
+
+
+def _detect_direct_tool_call(
+    message: str, available_tool_names: set[str]
+) -> dict[str, Any] | None:
+    """Select deterministic tools for explicit requests before spending provider quota."""
+    stripped = message.strip()
+
+    if "current_time" in available_tool_names and _is_current_time_query(stripped):
+        return {"name": "current_time", "arguments": {}}
+
+    if "calculator" in available_tool_names:
+        expression = _extract_calculator_expression(stripped)
+        if expression:
+            return {"name": "calculator", "arguments": {"expression": expression}}
+
+    if "system_info" in available_tool_names and re.search(
+        r"\b(operating system|os|system info|system_info)\b", stripped, re.IGNORECASE
+    ):
+        return {"name": "system_info", "arguments": {}}
+
+    if "ping" in available_tool_names:
+        ping_match = re.search(
+            r"\bping\s+([A-Za-z0-9.-]+)\b", stripped, re.IGNORECASE
+        )
+        if ping_match:
+            return {"name": "ping", "arguments": {"host": ping_match.group(1)}}
+
+    if "file_info" in available_tool_names:
+        file_match = re.search(
+            r"\bfile\s+info\s+for\s+(.+)$", stripped, re.IGNORECASE
+        )
+        if file_match:
+            return {
+                "name": "file_info",
+                "arguments": {"path": file_match.group(1).strip().strip("'\"")},
+            }
+
+    unknown_match = re.search(
+        r"\b(?:use(?:\s+a\s+tool\s+called)?|tool\s+called)\s+([A-Za-z_][\w-]*)",
+        stripped,
+        re.IGNORECASE,
+    )
+    if unknown_match:
+        requested_tool = unknown_match.group(1).strip(".,:;!?")
+        if requested_tool not in available_tool_names:
+            return {"name": requested_tool, "arguments": {}, "unknown": True}
+
+    return None
+
+
+def _format_tool_response(tool_name: str, output: Any, success: bool) -> str:
+    """Create a concise natural-language response from a tool result."""
+    if not success:
+        error = output.get("error") if isinstance(output, dict) else str(output)
+        return f"The {tool_name} tool could not complete the request: {error}"
+
+    if tool_name == "current_time" and isinstance(output, dict):
+        return (
+            f"The current UTC time is {output.get('time')} on {output.get('date')} "
+            f"({output.get('utc')})."
+        )
+
+    if tool_name == "calculator" and isinstance(output, dict):
+        return f"The calculator result is {output.get('result')}."
+
+    if tool_name == "system_info" and isinstance(output, dict):
+        return (
+            f"You are using {output.get('os')} {output.get('os_release')} "
+            f"on {output.get('machine')}."
+        )
+
+    if tool_name == "ping" and isinstance(output, dict):
+        if output.get("success"):
+            return f"Ping to {output.get('host')} completed successfully."
+        return f"Ping to {output.get('host')} failed: {output.get('error') or output.get('stderr')}"
+
+    if tool_name == "file_info" and isinstance(output, dict):
+        if output.get("success"):
+            kind = "directory" if output.get("is_directory") else "file"
+            return (
+                f"{output.get('name')} is a {kind} at {output.get('path')} "
+                f"with size {output.get('size_bytes')} bytes."
+            )
+        return f"The file_info tool rejected the request: {output.get('error')}"
+
+    return f"The {tool_name} tool returned: {json.dumps(output, default=str)}"
+
+
 def _build_tool_instructions(tools_list: list[Any]) -> str:
     """Build system-prompt instructions for available tools."""
     lines = [
@@ -167,6 +276,15 @@ class ProviderErrorException(AIServiceException):
             status_code=status_code,
             details={"provider": provider, "error_message": error_message},
         )
+
+
+def _provider_status_code(error: Exception) -> int | None:
+    """Extract an HTTP status from provider SDK exceptions when available."""
+    for attribute in ("status_code", "code", "http_status"):
+        value = getattr(error, attribute, None)
+        if isinstance(value, int):
+            return value
+    return None
 
 
 class InvalidModelException(AIServiceException):
@@ -323,9 +441,15 @@ class GeminiProvider(BaseAIProvider):
             return response_text, tokens
         except Exception as exc:
             logger.error(
-                "Gemini API call failed", extra={"error": str(exc), "model": model_name}
+                "Gemini API call failed",
+                extra={
+                    "error": str(exc),
+                    "model": model_name,
+                    "status_code": _provider_status_code(exc),
+                },
             )
             err_lower = str(exc).lower()
+            provider_status = _provider_status_code(exc)
             if (
                 "429" in err_lower
                 or "resource_exhausted" in err_lower
@@ -336,7 +460,11 @@ class GeminiProvider(BaseAIProvider):
                 raise APIKeyMissingException(self.provider_id)
             if "not found" in err_lower or "404" in err_lower:
                 raise InvalidModelException(model_name, self.provider_id)
-            raise ProviderErrorException(self.provider_id, str(exc))
+            raise ProviderErrorException(
+                self.provider_id,
+                str(exc),
+                status_code=provider_status or 502,
+            )
 
     async def generate_stream(
         self,
@@ -1111,6 +1239,64 @@ class AIService:
         # Tool injection
         registry_service = ToolRegistryService()
         tools_list = registry_service.list_tools().tools
+        available_tool_names = {tool.name for tool in tools_list}
+
+        direct_tool_call = _detect_direct_tool_call(
+            request.message, available_tool_names
+        )
+        if direct_tool_call:
+            tool_name = str(direct_tool_call.get("name", ""))
+            if direct_tool_call.get("unknown"):
+                final_response_text = (
+                    f"I can't use '{tool_name}' because it is not a registered tool. "
+                    f"Available tools are: {', '.join(sorted(available_tool_names))}."
+                )
+                logger.warning(
+                    "Rejected unknown direct tool request",
+                    extra={"tool_name": tool_name, "conversation_id": conversation_id},
+                )
+            else:
+                logger.info(
+                    "Executing direct tool intent",
+                    extra={"tool_name": tool_name, "conversation_id": conversation_id},
+                )
+                executor = ToolExecutor()
+                exec_req = ToolExecutionRequest(
+                    tool_name=tool_name,
+                    arguments=direct_tool_call.get("arguments", {}),
+                )
+                exec_res = executor.execute(exec_req)
+                final_response_text = _format_tool_response(
+                    tool_name, exec_res.output, exec_res.success
+                )
+
+            execution_time = round(time.perf_counter() - start_time, 4)
+            await self._save_conversation_messages(
+                conversation_id, request.message, final_response_text
+            )
+            final_tokens = TokenUsage(
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+            )
+            logger.info(
+                "AI Chat Request Completed Successfully",
+                extra={
+                    "provider": provider.provider_id,
+                    "execution_time_seconds": execution_time,
+                    "total_tokens": final_tokens.total_tokens,
+                    "direct_tool": tool_name,
+                },
+            )
+            return ChatResponse(
+                success=True,
+                provider=provider.provider_id,
+                model=provider.default_model,
+                response=final_response_text,
+                tokens=final_tokens,
+                execution_time=execution_time,
+                conversation_id=conversation_id,
+            )
 
         orchestration_request = request.model_copy()
 
@@ -1149,6 +1335,12 @@ class AIService:
                 ) as exc:
                     last_exception = exc
                     if attempt < attempts:
+                        await asyncio.sleep(backoff * (2 ** (attempt - 1)))
+                        continue
+                    break
+                except ProviderErrorException as exc:
+                    last_exception = exc
+                    if exc.status_code in {500, 502, 503, 504} and attempt < attempts:
                         await asyncio.sleep(backoff * (2 ** (attempt - 1)))
                         continue
                     break

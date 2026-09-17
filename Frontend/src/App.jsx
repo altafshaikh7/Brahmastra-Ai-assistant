@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Navbar from './component/Navbar';
 import Home from './pages/Home';
 import Dashboard from './pages/Dashboard';
@@ -7,15 +7,16 @@ import About from './pages/About';
 import SpeechTerminal from './component/SpeechTerminal';
 import StatusPanel from './component/StatusPanel';
 import { getSettings } from './services/settingsApi';
+import { getBackendHealth } from './services/api';
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState('Home');
   const [showSettingsPopup, setShowSettingsPopup] = useState(false);
   const [systemState, setSystemState] = useState({
     micStatus: 'DISABLED',
-    apiStatus: 'CONNECTED',
-    aiStatus: 'ONLINE',
-    authStatus: 'GRANTED',
+    apiStatus: 'CHECKING',
+    aiStatus: 'UNKNOWN',
+    authStatus: 'UNAUTHENTICATED',
     systemStatus: 'NOMINAL',
     isSpeaking: false,
     isProcessing: false,
@@ -48,6 +49,10 @@ export default function App() {
 
   // Fetch settings from MongoDB on initial mount
   useEffect(() => {
+    getBackendHealth()
+      .then(() => handleStateChange({ apiStatus: 'CONNECTED' }))
+      .catch(() => handleStateChange({ apiStatus: 'OFFLINE', systemStatus: 'DEGRADED' }));
+
     const fetchDBSettings = async () => {
       try {
         const savedSettings = await getSettings();
@@ -58,7 +63,7 @@ export default function App() {
             size: savedSettings.size || prev.size,
             sensitivity: savedSettings.sensitivity || prev.sensitivity,
             isDragging: savedSettings.isDragging !== undefined ? savedSettings.isDragging : prev.isDragging,
-            position: savedSettings.position?.x ? savedSettings.position : { x: window.innerWidth / 2, y: window.innerHeight / 2 },
+            position: savedSettings.position?.x !== undefined ? savedSettings.position : { x: window.innerWidth / 2, y: window.innerHeight / 2 },
           }));
         }
       } catch (err) {

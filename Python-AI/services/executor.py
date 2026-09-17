@@ -34,8 +34,14 @@ class ToolExecutor:
         )
     """
 
-    def __init__(self, registry: ToolRegistry | None = None) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry | None = None,
+        *,
+        allow_root_override: bool = False,
+    ) -> None:
         self._registry = registry or ToolRegistry.get_instance()
+        self._allow_root_override = allow_root_override
 
     def execute(self, request: ToolExecutionRequest) -> ToolExecutionResponse:
         """Execute the tool described by *request* and return a :class:`ToolExecutionResponse`.
@@ -104,9 +110,10 @@ class ToolExecutor:
                 execution_time_ms=round(elapsed_ms, 2),
             )
 
-    @staticmethod
     def _validate_arguments(
-        param_defs: dict[str, ToolParameter], provided_args: dict[str, Any]
+        self,
+        param_defs: dict[str, ToolParameter],
+        provided_args: dict[str, Any],
     ) -> dict[str, Any]:
         """Validate and coerce *provided_args* against *param_defs*.
 
@@ -118,11 +125,10 @@ class ToolExecutor:
         # 1. Check for unexpected arguments
         for arg_name in provided_args:
             if arg_name not in param_defs:
-                # Allow root_path for internal testing/file_info sandbox overrides
-                if arg_name == "root_path":
+                if arg_name == "root_path" and self._allow_root_override:
                     validated["root_path"] = provided_args["root_path"]
                     continue
-                logger.debug("Unknown argument '%s' passed to tool", arg_name)
+                raise ToolExecutionError(f"Unexpected parameter: '{arg_name}'")
 
         # 2. Validate declared parameters
         for name, param in param_defs.items():

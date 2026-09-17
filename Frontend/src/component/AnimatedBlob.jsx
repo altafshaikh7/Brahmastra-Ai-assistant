@@ -1,4 +1,4 @@
-import React, { useRef, useMemo, useState, useEffect } from 'react';
+import { useRef, useMemo, useState, useEffect } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
@@ -67,7 +67,7 @@ const PlasmaOrb = ({ analyzer, colorTheme, sensitivity = 1.2 }) => {
     uColorDeep: { value: new THREE.Color(0x001433) },
     uColorMid: { value: new THREE.Color(colorTheme || 0x0084ff) },
     uColorBright: { value: new THREE.Color(0xffffff) }
-  }), []);
+  }), [colorTheme]);
 
   // Update color dynamically when settings change
   useEffect(() => {
@@ -202,7 +202,7 @@ export default function AnimatedBlob({ blobSettings, setBlobSettings }) {
 
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  }, [blobSettings, setBlobSettings]);
 
   const blobSize = getBlobSize();
   const isDragMode = blobSettings?.isDragging;

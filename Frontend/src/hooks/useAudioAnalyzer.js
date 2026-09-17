@@ -9,7 +9,6 @@ export const useAudioAnalyzer = (stream, isActive) => {
 
   useEffect(() => {
     if (!stream || !isActive) {
-      setVolume(0);
       return;
     }
 

@@ -36,22 +36,22 @@ const postChat = async (req, res, next) => {
       content: query,
     });
 
-    // Prepare history context for Groq
-    const systemPrompt = {
-      role: "system",
-      content: "You are BRAHMASTRA AI, a high-end virtual assistant. Be extremely concise (max 15 words). No markdown. Respond in the exact language the user spoke (English for English, Hindi for Hindi, Urdu for Urdu). If ambiguous, default to English.",
-    };
+    // The Node conversation id is the canonical id shared with Python-AI.
+    const canonicalConversationId = String(conversation._id);
 
-    // Get last 10 messages for context window
-    const recentMessages = conversation.messages.slice(-10).map((msg) => ({
-      role: msg.sender === "ai" ? "assistant" : "user",
-      content: msg.content,
-    }));
-
-    const apiMessages = [systemPrompt, ...recentMessages];
-
-    // Call AI Service
-    const aiAnswer = await aiService.generateChatResponse(apiMessages);
+    // Forward to Python-AI orchestration (tool selection + execution handled there)
+    let aiAnswer;
+    try {
+      aiAnswer = await aiService.generateChatResponse(query, canonicalConversationId);
+    } catch (error) {
+      if (error.isPythonAiError || error.message === aiService.PYTHON_AI_UNAVAILABLE_MSG) {
+        return res.status(error.statusCode || 503).json({
+          success: false,
+          message: error.message || aiService.PYTHON_AI_UNAVAILABLE_MSG,
+        });
+      }
+      throw error;
+    }
 
     // Append AI Message
     conversation.messages.push({
@@ -65,7 +65,7 @@ const postChat = async (req, res, next) => {
       success: true,
       data: {
         answer: aiAnswer,
-        conversationId: conversation._id,
+        conversationId: canonicalConversationId,
       },
     });
   } catch (error) {

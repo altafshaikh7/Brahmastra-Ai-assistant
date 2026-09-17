@@ -1,25 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import { useState } from 'react';
 
-export default function JarvisNavbar({ blobSettings, setBlobSettings, currentPage, setCurrentPage, setShowSettingsPopup }) {
+export default function JarvisNavbar({ currentPage, setCurrentPage, setShowSettingsPopup }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [currentTime, setCurrentTime] = useState('');
-  const [aiConfidence, setAiConfidence] = useState(98.7);
-
-  // Simulate real-time metrics update
-  useEffect(() => {
-    const updateMetrics = () => {
-      const now = new Date();
-      const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      setCurrentTime(timeStr);
-      setAiConfidence(prev => {
-        const delta = (Math.random() - 0.5) * 0.4;
-        return Math.min(99.9, Math.max(97.5, prev + delta));
-      });
-    };
-    updateMetrics();
-    const interval = setInterval(updateMetrics, 2000);
-    return () => clearInterval(interval);
-  }, []);
 
   const handleNavigation = (item) => {
     if (item === 'Settings') {
@@ -101,7 +83,7 @@ export default function JarvisNavbar({ blobSettings, setBlobSettings, currentPag
               <div className="flex flex-col">
                 <div className="flex items-center gap-1">
                   <span className="text-slate-400">AI CONF.</span>
-                  <span className="text-purple-300 font-bold">{aiConfidence.toFixed(1)}%</span>
+                  <span className="text-slate-400 font-bold">NOT_REPORTED</span>
                 </div>
                 <div className="flex items-center gap-1">
                   <span className="text-slate-400">SECURE</span>

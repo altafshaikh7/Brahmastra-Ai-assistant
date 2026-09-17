@@ -10,3 +10,8 @@ const api = axios.create({
 });
 
 export default api;
+
+export const getBackendHealth = async () => {
+  const response = await api.get("/health", { timeout: 5000 });
+  return response.data;
+};

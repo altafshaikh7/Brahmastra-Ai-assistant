@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from schemas.chat import ChatRequest
 from services.ai_service import AIService, AIServiceException
 from utils.logger import get_logger
+from dependencies.internal_auth import verify_internal_api_key
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -55,7 +56,10 @@ class OrchestratedChatResponse(BaseModel):
 
 
 @router.post("/chat", response_model=OrchestratedChatResponse, tags=["AI"])
-async def orchestrated_chat(body: OrchestratedChatRequest) -> OrchestratedChatResponse:
+async def orchestrated_chat(
+    body: OrchestratedChatRequest,
+    _: None = Depends(verify_internal_api_key),
+) -> OrchestratedChatResponse:
     """Execute a chat request through the AI Tool Orchestrator.
 
     The orchestrator will:

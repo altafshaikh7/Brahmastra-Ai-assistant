@@ -2,11 +2,108 @@ const axios = require("axios");
 const FormData = require("form-data");
 const logger = require("../utils/logger");
 
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-if (!GROQ_API_KEY) {
-  throw new Error("GROQ_API_KEY is missing");
-}
 const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
+const PYTHON_AI_URL = (process.env.PYTHON_AI_URL || "http://localhost:8000").replace(/\/$/, "");
+const PYTHON_AI_TIMEOUT_MS = parseInt(process.env.PYTHON_AI_TIMEOUT_MS, 10) || 120000;
+const PYTHON_AI_API_KEY = process.env.PYTHON_AI_API_KEY;
+const PYTHON_AI_UNAVAILABLE_MSG = "Brahmastra AI service is temporarily unavailable.";
+
+class PythonAiError extends Error {
+  constructor(message, statusCode = 503) {
+    super(message);
+    this.name = "PythonAiError";
+    this.statusCode = statusCode;
+    this.isPythonAiError = true;
+  }
+}
+
+const getGroqApiKey = () => {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) {
+    throw new Error("GROQ_API_KEY is missing");
+  }
+  return apiKey;
+};
+
+/**
+ * Extract the latest user message from an OpenAI-style messages array or plain string.
+ * @param {string|Array<{role: string, content: string}>} messages
+ * @returns {string}
+ */
+const extractUserMessage = (messages) => {
+  if (typeof messages === "string") {
+    return messages.trim();
+  }
+
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return "";
+  }
+
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const msg = messages[i];
+    if (msg?.role === "user" && typeof msg.content === "string" && msg.content.trim()) {
+      return msg.content.trim();
+    }
+  }
+
+  return "";
+};
+
+/**
+ * Parse a Python-AI /ai/chat response payload.
+ * @param {object} data
+ * @returns {string}
+ */
+const parsePythonAiChatResponse = (data) => {
+  if (!data || data.success !== true || typeof data.response !== "string") {
+    throw new PythonAiError(PYTHON_AI_UNAVAILABLE_MSG, 503);
+  }
+
+  const answer = data.response.trim();
+  if (!answer) {
+    throw new PythonAiError(PYTHON_AI_UNAVAILABLE_MSG, 503);
+  }
+
+  return answer;
+};
+
+/**
+ * Map axios / network errors from Python-AI into safe user-facing errors.
+ * Never exposes secrets or raw upstream payloads.
+ * @param {Error} error
+ * @returns {Error}
+ */
+const mapPythonAiError = (error) => {
+  if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND" || error.code === "ECONNABORTED") {
+    return new PythonAiError(PYTHON_AI_UNAVAILABLE_MSG, 503);
+  }
+
+  if (error.response) {
+    const status = error.response.status;
+    logger.error("[Python-AI HTTP Error]", {
+      status,
+      path: "/ai/chat",
+    });
+
+    if (status >= 500 || status === 429 || status === 503) {
+      return new PythonAiError(PYTHON_AI_UNAVAILABLE_MSG, 503);
+    }
+
+    const detail = error.response.data?.detail;
+    if (typeof detail === "string" && detail.trim()) {
+      return new PythonAiError(detail.trim(), status || 502);
+    }
+
+    if (typeof error.response.data?.message === "string" && error.response.data.message.trim()) {
+      return new PythonAiError(error.response.data.message.trim(), status || 502);
+    }
+
+    return new PythonAiError(PYTHON_AI_UNAVAILABLE_MSG, 503);
+  }
+
+  logger.error("[Python-AI Request Error]", { message: error.message });
+  return new PythonAiError(PYTHON_AI_UNAVAILABLE_MSG, 503);
+};
 
 /**
  * Transcribe audio buffer using Groq Whisper API.
@@ -18,18 +115,18 @@ const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
  * @returns {Promise<string>} Transcript text
  */
 const transcribeAudio = async (fileBuffer, filename, mimeType) => {
-  // Clean mimeType to avoid header parsing issues (e.g., strip ';codecs=opus')
   const cleanMime = (mimeType || "audio/webm").split(";")[0].trim().toLowerCase();
-  
-  logger.info(`[STT DEBUG] Calling Whisper API:`);
-  logger.info(`  ├─ Filename:   ${filename}`);
-  logger.info(`  ├─ Clean MIME: ${cleanMime}`);
-  logger.info(`  └─ Buffer:     ${fileBuffer.length} bytes`);
+
+  logger.info("[STT] Calling Whisper API", {
+    filename,
+    mimeType: cleanMime,
+    bytes: fileBuffer.length,
+  });
 
   const formData = new FormData();
 
   formData.append("file", fileBuffer, {
-    filename: filename,
+    filename,
     contentType: cleanMime,
     knownLength: fileBuffer.length,
   });
@@ -46,7 +143,7 @@ const transcribeAudio = async (fileBuffer, filename, mimeType) => {
       {
         headers: {
           ...formData.getHeaders(),
-          Authorization: `Bearer ${GROQ_API_KEY}`,
+          Authorization: `Bearer ${getGroqApiKey()}`,
         },
         maxBodyLength: Infinity,
         maxContentLength: Infinity,
@@ -55,18 +152,16 @@ const transcribeAudio = async (fileBuffer, filename, mimeType) => {
     );
 
     const duration = Date.now() - startTime;
-    logger.info(`[Whisper API Response OK] (${duration}ms):`);
-    logger.info(`  └─ Raw Response Data: ${JSON.stringify(response.data)}`);
+    logger.info("[Whisper API Response OK]", { durationMs: duration });
 
     const transcript = (response.data?.text || "").trim();
-    logger.info(`[Whisper Final Transcript]: "${transcript}"`);
+    logger.info("[Whisper Final Transcript]", { transcriptLength: transcript.length });
     return transcript;
   } catch (error) {
     if (error.response) {
-      logger.error(`[Whisper API HTTP Error] Status: ${error.response.status}`);
-      logger.error(`  └─ Response Body: ${JSON.stringify(error.response.data)}`);
+      logger.error("[Whisper API HTTP Error]", { status: error.response.status });
     } else {
-      logger.error(`[Whisper Network/Request Error]: ${error.message}`);
+      logger.error("[Whisper Network/Request Error]", { message: error.message });
     }
     const errMsg = error.response?.data?.error?.message || error.message || "Whisper transcription failed";
     throw new Error(errMsg);
@@ -74,48 +169,74 @@ const transcribeAudio = async (fileBuffer, filename, mimeType) => {
 };
 
 /**
- * Generate chat response from Groq LLM.
- * @param {Array} messages - OpenAI-format message array
- * @param {string} model
+ * Generate chat response via Python-AI orchestration layer.
+ * @param {string|Array<{role: string, content: string}>} messages - User query or OpenAI-format history
+ * @param {string|null} [conversationId] - Optional Python-AI conversation id
  * @returns {Promise<string>} AI reply text
  */
-const generateChatResponse = async (messages, model = "llama-3.1-8b-instant") => {
-  const lastUserMsg = messages[messages.length - 1]?.content || "";
-  logger.info(`[Chat Request] Model: ${model}, Messages: ${messages.length}`);
-  logger.info(`  └─ User Query: "${lastUserMsg}"`);
+const generateChatResponse = async (messages, conversationId = null) => {
+  const userMessage = extractUserMessage(messages);
+  if (!userMessage) {
+    throw new Error("User message is required");
+  }
+
+  logger.info("[Chat Request] Forwarding to Python-AI", {
+    pythonAiUrl: PYTHON_AI_URL,
+    messageLength: userMessage.length,
+    hasConversationId: Boolean(conversationId),
+  });
+
+  const payload = { message: userMessage };
+  if (conversationId) {
+    payload.conversation_id = conversationId;
+  }
 
   try {
     const startTime = Date.now();
-    const response = await axios.post(
-      `${GROQ_BASE_URL}/chat/completions`,
-      {
-        model,
-        messages,
-        temperature: 0.6,
-        max_tokens: 80,
+    const response = await axios.post(`${PYTHON_AI_URL}/ai/chat`, payload, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(PYTHON_AI_API_KEY ? { "X-Internal-API-Key": PYTHON_AI_API_KEY } : {}),
       },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${GROQ_API_KEY}`,
-        },
-        timeout: 20000,
-      }
-    );
+      timeout: PYTHON_AI_TIMEOUT_MS,
+      validateStatus: () => true,
+    });
 
     const duration = Date.now() - startTime;
-    const answer = response.data.choices[0].message.content.trim();
-    logger.info(`[Chat Response OK] (${duration}ms): "${answer}"`);
+
+    if (response.status >= 400) {
+      throw mapPythonAiError({ response });
+    }
+
+    const answer = parsePythonAiChatResponse(response.data);
+    logger.info("[Chat Response OK]", {
+      durationMs: duration,
+      provider: response.data?.provider,
+      model: response.data?.model,
+      answerLength: answer.length,
+    });
     return answer;
   } catch (error) {
-    if (error.response) {
-      logger.error(`[Chat API Error] Status: ${error.response.status}, Body: ${JSON.stringify(error.response.data)}`);
-    } else {
-      logger.error(`[Chat Request Error]: ${error.message}`);
+    if (error.isPythonAiError) {
+      throw error;
     }
-    const errMsg = error.response?.data?.error?.message || error.message || "LLM completion failed";
-    throw new Error(errMsg);
+
+    if (
+      error.message === PYTHON_AI_UNAVAILABLE_MSG ||
+      error.message === "User message is required"
+    ) {
+      throw error;
+    }
+    throw mapPythonAiError(error);
   }
 };
 
-module.exports = { transcribeAudio, generateChatResponse };
+module.exports = {
+  transcribeAudio,
+  generateChatResponse,
+  extractUserMessage,
+  parsePythonAiChatResponse,
+  mapPythonAiError,
+  PYTHON_AI_UNAVAILABLE_MSG,
+  PythonAiError,
+};

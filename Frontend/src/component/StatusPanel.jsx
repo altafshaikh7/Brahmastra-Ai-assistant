@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 const StatusPanel = ({ systemState }) => {
   const [time, setTime] = useState(new Date());
@@ -9,7 +9,6 @@ const StatusPanel = ({ systemState }) => {
     authStatus,
     systemStatus,
     isSpeaking,
-    isProcessing,
     volume = 0
   } = systemState;
 
@@ -47,7 +46,7 @@ const StatusPanel = ({ systemState }) => {
         <span className="text-[7px] md:text-[8px] text-white/30 font-mono tracking-[2px] md:tracking-[4px] uppercase text-right">Neural Signal Analysis</span>
         <div className="flex items-end gap-[2px] md:gap-1 h-8 md:h-12 justify-end">
           {[...Array(10)].map((_, i) => {
-            const h = Math.max(4, (volume * (Math.random() * 0.5 + 0.5)) * (1.5 - Math.abs(i - 5) / 5));
+            const h = Math.max(4, volume * (0.55 + (i % 4) * 0.12) * (1.5 - Math.abs(i - 5) / 5));
             return (
               <div
                 key={i}

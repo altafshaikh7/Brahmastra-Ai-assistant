@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from schemas.tool import (
     ToolExecutionRequest,
@@ -13,6 +13,7 @@ from schemas.tool import (
 from services.executor import ToolExecutor
 from services.registry_service import ToolRegistryService
 from tools.registry import ToolNotFoundError
+from dependencies.internal_auth import verify_internal_api_key
 
 router = APIRouter()
 registry_service = ToolRegistryService()
@@ -69,7 +70,10 @@ async def get_tool_info(tool_name: str) -> ToolSchema:
     summary="Execute a tool",
     description="Executes the specified tool with provided arguments and returns the result.",
 )
-async def execute_tool(request: ToolExecutionRequest) -> ToolExecutionResponse:
+async def execute_tool(
+    request: ToolExecutionRequest,
+    _: None = Depends(verify_internal_api_key),
+) -> ToolExecutionResponse:
     """Execute a tool request and return the execution response."""
     response = executor.execute(request)
     return response

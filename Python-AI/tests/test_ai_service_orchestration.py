@@ -97,19 +97,9 @@ def test_is_not_current_time_query(message: str):
 
 
 @pytest.mark.asyncio
-async def test_current_time_forced_when_gemini_refuses(
+async def test_current_time_direct_tool_intent(
     mock_provider, mock_registry, mock_executor
 ):
-    mock_provider.generate_response.side_effect = [
-        (
-            "I do not have access to real-time information.",
-            TokenUsage(prompt_tokens=10, completion_tokens=8, total_tokens=18),
-        ),
-        (
-            "It is currently 3:45 PM UTC.",
-            TokenUsage(prompt_tokens=20, completion_tokens=6, total_tokens=26),
-        ),
-    ]
     mock_executor.execute.return_value = ToolExecutionResponse(
         tool_name="current_time",
         success=True,
@@ -124,12 +114,11 @@ async def test_current_time_forced_when_gemini_refuses(
     service = AIService()
     resp = await service.chat(ChatRequest(message="What time is it right now?"))
 
-    assert resp.response == "It is currently 3:45 PM UTC."
+    assert "15:45:00" in resp.response
+    assert "2024-01-15" in resp.response
     assert mock_executor.execute.call_count == 1
     assert mock_executor.execute.call_args[0][0].tool_name == "current_time"
-    assert mock_provider.generate_response.call_count == 2
-    history_arg = mock_provider.generate_response.call_args_list[1][0][1]
-    assert "current_time" in history_arg[-1]["content"]
+    mock_provider.generate_response.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -209,14 +198,15 @@ async def test_system_info_tool(mock_provider, mock_registry, mock_executor):
     mock_executor.execute.return_value = ToolExecutionResponse(
         tool_name="system_info",
         success=True,
-        output="Windows 11",
+        output={"os": "Windows", "os_release": "11", "machine": "AMD64"},
         execution_time_ms=1.0,
     )
 
     service = AIService()
     resp = await service.chat(ChatRequest(message="OS?"))
-    assert resp.response == "Windows 11"
+    assert resp.response == "You are using Windows 11 on AMD64."
     assert mock_executor.execute.call_args[0][0].tool_name == "system_info"
+    mock_provider.generate_response.assert_not_called()
 
 
 @pytest.mark.asyncio

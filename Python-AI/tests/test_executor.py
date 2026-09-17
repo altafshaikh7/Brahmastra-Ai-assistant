@@ -17,7 +17,7 @@ from tools.registry import ToolNotFoundError
 
 @pytest.fixture()
 def executor() -> ToolExecutor:
-    return ToolExecutor()
+    return ToolExecutor(allow_root_override=True)
 
 
 @pytest.fixture()

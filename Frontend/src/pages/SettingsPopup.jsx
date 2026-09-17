@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { updateSettings } from '../services/settingsApi';
 
 export default function SettingsPopup({ blobSettings, setBlobSettings, onClose }) {

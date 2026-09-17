@@ -1,30 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
+import { getBackendHealth } from '../services/api';
 
 export default function Dashboard() {
-    const [stats, setStats] = useState({
-        aiConfidence: 98.7,
-        activeUsers: 1247,
-        responseTime: 124,
-        totalQueries: 45289
-    });
+    const [health, setHealth] = useState({ status: 'checking' });
 
     useEffect(() => {
-        const interval = setInterval(() => {
-            setStats(prev => ({
-                aiConfidence: Math.min(99.9, prev.aiConfidence + (Math.random() - 0.5) * 0.3),
-                activeUsers: prev.activeUsers + Math.floor(Math.random() * 10) - 3,
-                responseTime: Math.max(80, prev.responseTime + Math.floor(Math.random() * 10) - 5),
-                totalQueries: prev.totalQueries + Math.floor(Math.random() * 50)
-            }));
-        }, 3000);
-        return () => clearInterval(interval);
+        getBackendHealth().then(setHealth).catch(() => setHealth({ status: 'offline' }));
     }, []);
 
     const cards = [
-        { title: 'AI Confidence', value: `${stats.aiConfidence.toFixed(1)}%`, icon: '🧠', color: 'from-purple-500 to-pink-500' },
-        { title: 'Active Users', value: stats.activeUsers.toLocaleString(), icon: '👥', color: 'from-blue-500 to-cyan-500' },
-        { title: 'Response Time', value: `${stats.responseTime}ms`, icon: '⚡', color: 'from-green-500 to-emerald-500' },
-        { title: 'Total Queries', value: stats.totalQueries.toLocaleString(), icon: '💬', color: 'from-orange-500 to-red-500' }
+        { title: 'Backend', value: health.status?.toUpperCase() || 'UNKNOWN', icon: '◉', color: 'from-cyan-500 to-blue-500' },
+        { title: 'AI metrics', value: 'NOT AVAILABLE', icon: '—', color: 'from-slate-500 to-slate-700' },
+        { title: 'User metrics', value: 'NOT AVAILABLE', icon: '—', color: 'from-slate-500 to-slate-700' },
+        { title: 'Request metrics', value: 'NOT AVAILABLE', icon: '—', color: 'from-slate-500 to-slate-700' }
     ];
 
     return (
