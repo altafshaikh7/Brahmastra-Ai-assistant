@@ -245,9 +245,72 @@ const generateChatResponse = async (messages, conversationId = null, context = [
   }
 };
 
+const generateChatResponseStream = async (messages, conversationId = null, context = [], userToken = null, onEvent) => {
+  const userMessage = extractUserMessage(messages);
+  if (!userMessage) {
+    throw new Error("User message is required");
+  }
+
+  const payload = {
+    message: userMessage,
+    context: Array.isArray(context) ? context.slice(-20) : [],
+  };
+  if (conversationId) {
+    payload.conversation_id = conversationId;
+  }
+  if (userToken) {
+    payload.user_token = userToken;
+  }
+
+  try {
+    const response = await axios.post(`${PYTHON_AI_URL}/ai/chat/stream`, payload, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(PYTHON_AI_API_KEY ? { "X-Internal-API-Key": PYTHON_AI_API_KEY } : {}),
+      },
+      responseType: 'stream',
+      timeout: PYTHON_AI_TIMEOUT_MS,
+    });
+
+    return new Promise((resolve, reject) => {
+      let buffer = "";
+      response.data.on("data", (chunk) => {
+        buffer += chunk.toString();
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop();
+        for (const part of parts) {
+          if (part.startsWith("data: ")) {
+            const dataStr = part.slice(6);
+            if (dataStr === "[DONE]") continue;
+            try {
+              const event = JSON.parse(dataStr);
+              if (event.type === "final") {
+                resolve(event.result);
+              } else {
+                onEvent(event);
+              }
+            } catch (e) {
+              logger.warn("Failed to parse SSE event", e);
+            }
+          }
+        }
+      });
+      response.data.on("end", () => {
+        // Handle any remaining buffer if needed, but 'final' event should have resolved
+      });
+      response.data.on("error", (err) => {
+        reject(mapPythonAiError(err));
+      });
+    });
+  } catch (error) {
+    throw mapPythonAiError(error);
+  }
+};
+
 module.exports = {
   transcribeAudio,
   generateChatResponse,
+  generateChatResponseStream,
   extractUserMessage,
   parsePythonAiChatResponse,
   mapPythonAiError,

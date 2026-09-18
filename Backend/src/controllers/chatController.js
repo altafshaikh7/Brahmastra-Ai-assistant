@@ -151,8 +151,94 @@ const deleteConversation = async (req, res, next) => {
   }
 };
 
+const postChatStream = async (req, res, next) => {
+  try {
+    const { query, conversationId } = req.body;
+    if (typeof query !== "string" || !query.trim()) {
+      return res.status(400).json({ success: false, message: "Query is required" });
+    }
+    if (query.length > MAX_MESSAGE_LENGTH) {
+      return res.status(413).json({ success: false, message: "Query is too long" });
+    }
+
+    const userId = req.user._id;
+    let conversation;
+    if (conversationId && !mongoose.Types.ObjectId.isValid(conversationId)) {
+      return res.status(400).json({ success: false, message: "Invalid conversationId" });
+    }
+
+    if (conversationId) {
+      conversation = await Conversation.findOne({ _id: conversationId, userId });
+      if (!conversation) {
+        return res.status(404).json({ success: false, message: "Conversation not found" });
+      }
+    }
+
+    if (!conversation) {
+      const title = query.length > 30 ? `${query.substring(0, 30)}...` : query;
+      conversation = new Conversation({
+        userId,
+        title: title,
+        messages: [],
+      });
+    }
+
+    const context = conversation.messages.map((message) => ({
+      role: message.role || (message.sender === "ai" ? "assistant" : message.sender),
+      content: message.content,
+    }));
+
+    conversation.messages.push({
+      role: "user",
+      content: query,
+    });
+
+    const canonicalConversationId = String(conversation._id);
+    const userToken = req.headers.authorization?.split(" ")[1] || null;
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const onEvent = (event) => {
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    };
+
+    try {
+      const result = await aiService.generateChatResponseStream(query, canonicalConversationId, context, userToken, onEvent);
+
+      const aiAnswer = result.response;
+      conversation.messages.push({
+        role: "assistant",
+        content: aiAnswer,
+      });
+
+      await conversation.save();
+
+      extractAndSaveMemories(userId, query).catch(err =>
+        logger.warn("Non-blocking memory extraction failed:", err.message)
+      );
+
+      res.write(`data: ${JSON.stringify({ type: 'final', result: { answer: aiAnswer, conversationId: canonicalConversationId, agent_status: result.agent_status } })}\n\n`);
+      res.end();
+    } catch (error) {
+      logger.error("Error in postChatStream:", error);
+      res.write(`data: ${JSON.stringify({ type: 'error', error: error.message || aiService.PYTHON_AI_UNAVAILABLE_MSG })}\n\n`);
+      res.end();
+    }
+  } catch (error) {
+    logger.error("Error in postChatStream wrapper:", error);
+    if (!res.headersSent) {
+      next(error);
+    } else {
+      res.end();
+    }
+  }
+};
+
 module.exports = {
   postChat,
+  postChatStream,
   getConversations,
   deleteConversation,
 };

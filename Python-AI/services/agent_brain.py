@@ -30,7 +30,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, AsyncGenerator
 
 import httpx
 
@@ -314,6 +314,213 @@ class AgentBrain:
 
     def __init__(self) -> None:
         self._settings = get_settings()
+
+    async def process_stream(
+        self,
+        message: str,
+        conversation_id: str,
+        history: list[dict[str, str]],
+        system_prompt_override: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        user_token: str | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Process a user message through the full agent pipeline and yield state updates."""
+        state = AgentState(
+            request=message,
+            conversation_id=conversation_id,
+            user_token=user_token,
+        )
+
+        yield {"type": "status", "status": "READY"}
+
+        # --- Setup ---
+        provider = AIProviderFactory.get_provider(settings=self._settings)
+        registry_service = ToolRegistryService()
+        tools_list = registry_service.list_tools().tools
+        available_tool_names = {t.name for t in tools_list}
+        capabilities_used: list[str] = []
+
+        # --- Intent Classification ---
+        intent = _classify_intent(message, available_tool_names)
+        state.intent = str(intent)
+
+        # --- Step 2: Parallel capability retrieval ---
+        retrieval_tasks = []
+        retrieval_labels = []
+
+        if intent["needs_memory"] and user_token:
+            state.status = AgentStatus.RETRIEVING_MEMORY
+            yield {"type": "status", "status": state.status.value, "message": "Retrieving memories"}
+            retrieval_tasks.append(_fetch_relevant_memories(message, user_token))
+            retrieval_labels.append("memory")
+        else:
+            retrieval_tasks.append(asyncio.coroutine(lambda: "")())
+            retrieval_labels.append("memory")
+
+        if intent["needs_rag"] and user_token:
+            state.status = AgentStatus.RETRIEVING_DOCUMENTS
+            yield {"type": "status", "status": state.status.value, "message": "Retrieving documents"}
+            retrieval_tasks.append(_fetch_rag_context(message, user_token))
+            retrieval_labels.append("rag")
+        else:
+            retrieval_tasks.append(asyncio.coroutine(lambda: "")())
+            retrieval_labels.append("rag")
+
+        if intent["needs_web_research"]:
+            state.status = AgentStatus.RESEARCHING
+            yield {"type": "status", "status": state.status.value, "message": "Searching web"}
+            web_svc = get_web_research_service()
+
+            async def _do_web_research() -> str:
+                result = await web_svc.research(message)
+                return web_svc.format_context(result)
+
+            retrieval_tasks.append(_do_web_research())
+            retrieval_labels.append("web")
+        else:
+            retrieval_tasks.append(asyncio.coroutine(lambda: "")())
+            retrieval_labels.append("web")
+
+        retrieval_results = await asyncio.gather(*retrieval_tasks, return_exceptions=True)
+
+        for label, result in zip(retrieval_labels, retrieval_results):
+            if isinstance(result, Exception):
+                result = ""
+            if label == "memory" and result:
+                state.memory_context = result
+                capabilities_used.append("memory")
+                yield {"type": "activity", "activity_type": "memory", "message": "Relevant memory retrieved"}
+            elif label == "rag" and result:
+                state.rag_context = result
+                capabilities_used.append("rag")
+                yield {"type": "activity", "activity_type": "rag", "message": "Knowledge retrieved"}
+            elif label == "web" and result:
+                state.web_context = result
+                capabilities_used.append("web_research")
+                yield {"type": "activity", "activity_type": "web_research", "message": "Web sources fetched"}
+
+        # --- Step 3: Assemble context and run LLM orchestration loop ---
+        state.status = AgentStatus.THINKING
+        yield {"type": "status", "status": state.status.value}
+
+        needs_tools = bool(tools_list) and not intent["is_conversational"]
+        system_prompt = system_prompt_override or _assemble_system_prompt(
+            state, tools_list, include_tools=needs_tools
+        )
+
+        chat_req = ChatRequest(
+            message=message,
+            conversation_id=conversation_id,
+            context=[ChatMessage(role=m["role"], content=m["content"]) for m in history],
+            system_prompt=system_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=False,
+        )
+
+        attempts = max(1, self._settings.ai.retry_attempts)
+        backoff = max(0.0, self._settings.ai.retry_backoff_seconds)
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        loop_history = list(history)
+
+        for step in range(MAX_AGENT_STEPS):
+            state.steps_taken = step + 1
+            last_exception: Exception | None = None
+            response_text = ""
+            tokens = None
+
+            for attempt in range(1, attempts + 1):
+                try:
+                    response_text, tokens = await provider.generate_response(chat_req, loop_history)
+                    break
+                except (RateLimitException, NetworkErrorException, TimeoutException) as exc:
+                    last_exception = exc
+                    if attempt < attempts:
+                        await asyncio.sleep(backoff * (2 ** (attempt - 1)))
+                    continue
+                except ProviderErrorException as exc:
+                    last_exception = exc
+                    if exc.status_code in {500, 502, 503, 504} and attempt < attempts:
+                        await asyncio.sleep(backoff * (2 ** (attempt - 1)))
+                    continue
+                except Exception as exc:
+                    last_exception = exc
+                    break
+
+            if last_exception and not response_text:
+                state.status = AgentStatus.ERROR
+                state.error = str(last_exception)
+                yield {"type": "status", "status": state.status.value, "error": state.error}
+                raise last_exception
+
+            if tokens:
+                total_prompt_tokens += tokens.prompt_tokens
+                total_completion_tokens += tokens.completion_tokens
+
+            parsed_tool_call = _parse_tool_call(response_text)
+            if not parsed_tool_call:
+                if step == 0 and "current_time" in available_tool_names and _is_current_time_query(message):
+                    parsed_tool_call = {"name": "current_time", "arguments": {}}
+                else:
+                    state.final_response = response_text
+                    break
+
+            tool_name = parsed_tool_call.get("name", "")
+            tool_args = parsed_tool_call.get("arguments", {})
+
+            if tool_name not in available_tool_names:
+                state.final_response = f"I tried to use tool '{tool_name}' but it is not available."
+                break
+
+            state.status = AgentStatus.EXECUTING_TOOL
+            yield {"type": "status", "status": state.status.value, "tool": tool_name}
+            yield {"type": "activity", "activity_type": "tool_start", "tool": tool_name, "input": tool_args}
+
+            executor = ToolExecutor()
+            exec_req = ToolExecutionRequest(tool_name=tool_name, arguments=tool_args)
+
+            try:
+                exec_res = await asyncio.wait_for(
+                    asyncio.get_event_loop().run_in_executor(None, executor.execute, exec_req),
+                    timeout=TOOL_TIMEOUT_SECONDS,
+                )
+                tool_output_str = json.dumps(exec_res.output) if not isinstance(exec_res.output, str) else exec_res.output
+                capabilities_used.append(f"tool:{tool_name}")
+
+                loop_history.append({"role": "assistant", "content": response_text})
+                loop_history.append({"role": "user", "content": f"Tool '{tool_name}' returned: {tool_output_str}"})
+
+                yield {"type": "activity", "activity_type": "tool_end", "tool": tool_name, "result": tool_output_str, "success": exec_res.success}
+            except asyncio.TimeoutError:
+                loop_history.append({"role": "assistant", "content": response_text})
+                loop_history.append({"role": "user", "content": f"Tool '{tool_name}' timed out after {TOOL_TIMEOUT_SECONDS}s."})
+                yield {"type": "activity", "activity_type": "tool_end", "tool": tool_name, "result": "Timeout", "success": False}
+
+            state.status = AgentStatus.THINKING
+            yield {"type": "status", "status": state.status.value}
+
+        else:
+            state.final_response = response_text or "Max steps reached."
+            state.status = AgentStatus.MAX_STEPS_REACHED
+
+        if not state.final_response:
+            state.final_response = "Error generating response."
+
+        state.status = AgentStatus.RESPONDING
+        yield {"type": "status", "status": state.status.value}
+
+        state.tokens_used = TokenUsage(
+            prompt_tokens=total_prompt_tokens,
+            completion_tokens=total_completion_tokens,
+            total_tokens=total_prompt_tokens + total_completion_tokens,
+        )
+
+        yield {
+            "type": "final",
+            "result": self._build_result(state, provider, capabilities_used)
+        }
 
     async def process(
         self,

@@ -5,7 +5,7 @@ import Dashboard from './pages/Dashboard';
 import SettingsPopup from './pages/SettingsPopup';
 import About from './pages/About';
 import Auth from './pages/Auth';
-import SpeechTerminal from './component/SpeechTerminal';
+import BrahmastraTerminal from './component/BrahmastraTerminal';
 import StatusPanel from './component/StatusPanel';
 import { getSettings } from './services/settingsApi';
 import { getBackendHealth } from './services/api';
@@ -157,7 +157,7 @@ export default function App() {
         {renderPage()}
       </main>
 
-      <SpeechTerminal onStateChange={handleStateChange} />
+      <BrahmastraTerminal onStateChange={handleStateChange} />
 
       {/* Futuristic Grid Overlay */}
       <div className="absolute inset-0 z-0 pointer-events-none opacity-[0.03] bg-[linear-gradient(to_right,#00f2ff_1px,transparent_1px),linear-gradient(to_bottom,#00f2ff_1px,transparent_1px)] bg-[size:60px_60px]" />

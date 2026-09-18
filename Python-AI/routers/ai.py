@@ -153,6 +153,38 @@ async def orchestrated_chat(
         logger.error("Unexpected error in orchestrated chat", extra={"error": str(exc)})
         raise HTTPException(status_code=500, detail="Internal server error") from exc
 
+from fastapi.responses import StreamingResponse
+
+@router.post("/chat/stream", tags=["AI"])
+async def orchestrated_chat_stream(
+    body: OrchestratedChatRequest,
+    _: None = Depends(verify_internal_api_key),
+) -> StreamingResponse:
+    brain = get_agent_brain()
+    history = [
+        {"role": msg.role, "content": msg.content}
+        for msg in body.context[-20:]
+    ]
+
+    async def event_generator():
+        try:
+            async for event in brain.process_stream(
+                message=body.message,
+                conversation_id=body.conversation_id or f"conv_{int(__import__('time').time() * 1000)}",
+                history=history,
+                system_prompt_override=body.system_prompt,
+                temperature=body.temperature,
+                max_tokens=body.max_tokens,
+                user_token=body.user_token,
+            ):
+                import json
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as exc:
+            import json
+            logger.error("Error in orchestrated chat stream", extra={"error": str(exc)})
+            yield f"data: {json.dumps({'type': 'status', 'status': 'ERROR', 'error': str(exc)})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @router.post("/embeddings", response_model=EmbeddingsResponse, tags=["AI"])
 async def generate_embeddings(
